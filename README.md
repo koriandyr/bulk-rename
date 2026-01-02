@@ -5,7 +5,7 @@
 [![SAST](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/koriandyr/11652bed39b7fe5a00b8313460f88a89/raw/bulk-rename-sast.json)](https://github.com/koriandyr/bulk-rename/actions/workflows/ci.yml)
 [![SCA](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/koriandyr/11652bed39b7fe5a00b8313460f88a89/raw/bulk-rename-sca.json)](https://github.com/koriandyr/bulk-rename/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/downloads/)
+[![Python Version](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
 [![PyPI Package](https://img.shields.io/badge/PyPI-coming%20soon-lightgrey)](https://pypi.org/)
 
 > A Python package for intelligently batch renaming media files based on creation dates with automatic format conversion
@@ -79,7 +79,7 @@
   - **Linux**: `sudo apt-get install ffmpeg` or `sudo yum install ffmpeg`
 
 **Python Requirements:**
-- Python 3.8 or higher
+- Python 3.9 or higher
 - pip package manager
 
 ### Installation Options

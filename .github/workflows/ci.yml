@@ -11,7 +11,7 @@ on:
 # This pipeline validates the bulk_rename package across multiple dimensions:
 # 1. Security scanning (Bandit, Safety, Semgrep)
 # 2. Multi-platform testing (Linux, macOS, Windows)
-# 3. Multi-Python version testing (3.8-3.12)
+# 3. Multi-Python version testing (3.9-3.12)
 # 4. Package validation and build testing
 # 5. Code quality (pylint, coverage, tests)
 #
@@ -982,7 +982,7 @@ jobs:
     # ============================================================================
     # Comment PR with Quality Results
     # ============================================================================
-    - name: Comment PR with quality ults
+    - name: Comment PR with quality results
       if: github.event_name == 'pull_request'
       uses: actions/github-script@v7
       with:
@@ -1090,8 +1090,6 @@ jobs:
         # Secondary platforms (Linux/macOS) - test latest Python only to verify cross-platform compatibility
         include:
           # Windows - full Python version coverage (primary platform)
-          - os: windows-latest
-            python-version: '3.8'
           - os: windows-latest
             python-version: '3.9'
           - os: windows-latest
@@ -1241,7 +1239,7 @@ jobs:
         fi
 
         echo "✅ Package validation PASSED on all platforms:"
-        echo "  - Windows: Python 3.8, 3.9, 3.10, 3.11, 3.12"
+        echo "  - Windows: Python 3.9, 3.10, 3.11, 3.12"
         echo "  - Ubuntu: Python 3.12"
         echo "  - macOS: Python 3.12"
         echo ""
@@ -1334,7 +1332,7 @@ jobs:
           if (allPassed) {
             comment += '### ✅ All platforms passed!\n\n';
             comment += 'The package builds, validates, and installs correctly on:\n';
-            comment += '- **Windows**: Python 3.8, 3.9, 3.10, 3.11, 3.12\n';
+            comment += '- **Windows**: Python 3.9, 3.10, 3.11, 3.12\n';
             comment += '- **Ubuntu**: Python 3.12\n';
             comment += '- **macOS**: Python 3.12\n';
           } else {
