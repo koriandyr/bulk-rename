@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bulk-rename"
+version = "1.0.0"
+description = "A tool for batch renaming media files based on creation dates"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "Pillow>=10.0.0",
+    "send2trash>=1.8.2",
+    "pywin32>=306; sys_platform == 'win32'",
+]
+
+[project.urls]
+Homepage = "https://github.com/koriandyr/bulk-rename"
+Repository = "https://github.com/koriandyr/bulk-rename"
+Issues = "https://github.com/koriandyr/bulk-rename/issues"
+
+[project.scripts]
+bulk-rename = "bulk_rename.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["tests*", "*.tests*", "tests", "*.egg-info", "dist", "build"]
+
+[tool.setuptools.package-data]
+bulk_rename = ["*.md"]

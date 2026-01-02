@@ -1,0 +1,10 @@
+-r requirements.txt
+pylint>=3.0.0
+pywin32-stubs>=1.0.0; sys_platform == 'win32'
+pytest>=8.0.0
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0
+
+# Security scanning tools
+bandit[toml]>=1.7.0
+safety>=3.0.0

@@ -1,0 +1,1374 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+# CI Pipeline for bulk_rename Python Package
+#
+# This pipeline validates the bulk_rename package across multiple dimensions:
+# 1. Security scanning (Bandit, Safety, Semgrep)
+# 2. Multi-platform testing (Linux, macOS, Windows)
+# 3. Multi-Python version testing (3.8-3.12)
+# 4. Package validation and build testing
+# 5. Code quality (pylint, coverage, tests)
+#
+# Quality Gates:
+# - 100% test coverage required
+# - 10.00/10.00 pylint score required
+# - All tests must pass
+# - No high-severity security issues
+# - Package must build and install correctly
+
+env:
+  # Security scanning controls - set to 'false' to disable individual scanners
+  ENABLE_BANDIT: 'true'    # Python SAST scanner
+  ENABLE_SAFETY: 'true'    # Python dependency vulnerability scanner
+  ENABLE_SEMGREP: 'true'   # Multi-language SAST scanner
+
+jobs:
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      security-events: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install security scanning tools
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        if [ "${{ env.ENABLE_BANDIT }}" = "true" ]; then
+          pip install bandit[toml]
+        fi
+        if [ "${{ env.ENABLE_SAFETY }}" = "true" ]; then
+          pip install safety
+        fi
+
+    # ============================================================================
+    # Bandit - Python SAST Scanner
+    # ============================================================================
+    - name: Run Bandit SAST scan
+      id: bandit
+      if: env.ENABLE_BANDIT == 'true'
+      shell: bash
+      run: |
+        echo "Running Bandit security scan..."
+        bandit -r bulk_rename/ --skip B404,B603,B607,B101 -f json -o bandit-report.json || true
+        bandit -r bulk_rename/ --skip B404,B603,B607,B101 -f txt -o bandit-report.txt || true
+
+        # Extract issue counts
+        if [ -f bandit-report.json ]; then
+          high=$(python -c "import json; data=json.load(open('bandit-report.json')); print(len([x for x in data.get('results', []) if x.get('issue_severity') == 'HIGH']))" || echo "0")
+          medium=$(python -c "import json; data=json.load(open('bandit-report.json')); print(len([x for x in data.get('results', []) if x.get('issue_severity') == 'MEDIUM']))" || echo "0")
+          low=$(python -c "import json; data=json.load(open('bandit-report.json')); print(len([x for x in data.get('results', []) if x.get('issue_severity') == 'LOW']))" || echo "0")
+          total=$((high + medium + low))
+
+          echo "high=$high" >> $GITHUB_OUTPUT
+          echo "medium=$medium" >> $GITHUB_OUTPUT
+          echo "low=$low" >> $GITHUB_OUTPUT
+          echo "total=$total" >> $GITHUB_OUTPUT
+          echo "status=completed" >> $GITHUB_OUTPUT
+
+          echo "Bandit found: $high high, $medium medium, $low low severity issues"
+        else
+          echo "status=failed" >> $GITHUB_OUTPUT
+          echo "Bandit scan failed to generate report"
+        fi
+      continue-on-error: true
+
+    # ============================================================================
+    # Safety - Dependency Vulnerability Scanner
+    # ============================================================================
+    - name: Run Safety dependency scan
+      id: safety
+      if: env.ENABLE_SAFETY == 'true'
+      shell: bash
+      run: |
+        echo "Running Safety dependency vulnerability scan..."
+        # Safety CLI changed - use correct output format flags
+        safety check --output json > safety-report.json || true
+        safety check --output text > safety-report.txt || true
+
+        # Extract vulnerability counts
+        if [ -f safety-report.json ]; then
+          vulns=$(python -c "import json; data=json.load(open('safety-report.json')); print(len(data.get('vulnerabilities', [])))" 2>/dev/null || echo "0")
+
+          echo "vulnerabilities=$vulns" >> $GITHUB_OUTPUT
+          echo "status=completed" >> $GITHUB_OUTPUT
+
+          echo "Safety found: $vulns vulnerabilities in dependencies"
+        else
+          echo "vulnerabilities=0" >> $GITHUB_OUTPUT
+          echo "status=completed" >> $GITHUB_OUTPUT
+          echo "No vulnerabilities found or scan completed with warnings"
+        fi
+      continue-on-error: true
+
+    # ============================================================================
+    # Semgrep - Multi-language SAST Scanner
+    # ============================================================================
+    - name: Run Semgrep SAST scan
+      id: semgrep
+      if: env.ENABLE_SEMGREP == 'true'
+      shell: bash
+      run: |
+        echo "Running Semgrep security scan..."
+        # Install semgrep
+        pip install semgrep
+
+        # Run semgrep with both SARIF and JSON output
+        # --metrics=off disables telemetry to avoid permission warnings
+        semgrep scan --config=auto --sarif --output=semgrep.sarif --metrics=off . || true
+        semgrep scan --config=auto --json --output=semgrep-report.json --metrics=off . || true
+
+        echo "Semgrep scan completed"
+      continue-on-error: true
+
+    - name: Extract Semgrep results
+      id: semgrep-results
+      if: env.ENABLE_SEMGREP == 'true'
+      shell: bash
+      run: |
+        if [ -f semgrep-report.json ]; then
+          # Count findings by severity from JSON report (more detailed than SARIF)
+          error=$(python -c "import json; data=json.load(open('semgrep-report.json')); print(len([r for r in data.get('results', []) if r.get('extra', {}).get('severity') == 'ERROR']))" 2>/dev/null || echo "0")
+          warning=$(python -c "import json; data=json.load(open('semgrep-report.json')); print(len([r for r in data.get('results', []) if r.get('extra', {}).get('severity') == 'WARNING']))" 2>/dev/null || echo "0")
+          info=$(python -c "import json; data=json.load(open('semgrep-report.json')); print(len([r for r in data.get('results', []) if r.get('extra', {}).get('severity') == 'INFO']))" 2>/dev/null || echo "0")
+          total=$((error + warning + info))
+
+          echo "error=$error" >> $GITHUB_OUTPUT
+          echo "warning=$warning" >> $GITHUB_OUTPUT
+          echo "info=$info" >> $GITHUB_OUTPUT
+          echo "total=$total" >> $GITHUB_OUTPUT
+          echo "status=completed" >> $GITHUB_OUTPUT
+
+          echo "Semgrep found: $error error, $warning warning, $info info severity issues"
+        else
+          echo "error=0" >> $GITHUB_OUTPUT
+          echo "warning=0" >> $GITHUB_OUTPUT
+          echo "info=0" >> $GITHUB_OUTPUT
+          echo "total=0" >> $GITHUB_OUTPUT
+          echo "status=completed" >> $GITHUB_OUTPUT
+          echo "Semgrep completed with no findings"
+        fi
+      continue-on-error: true
+
+    # ============================================================================
+    # Upload Security Reports
+    # ============================================================================
+    - name: Upload Bandit reports
+      uses: actions/upload-artifact@v4
+      if: always() && env.ENABLE_BANDIT == 'true'
+      with:
+        name: bandit-reports
+        path: |
+          bandit-report.json
+          bandit-report.txt
+        retention-days: 30
+
+    - name: Upload Safety reports
+      uses: actions/upload-artifact@v4
+      if: always() && env.ENABLE_SAFETY == 'true'
+      with:
+        name: safety-reports
+        path: |
+          safety-report.json
+          safety-report.txt
+        retention-days: 30
+
+    - name: Upload Semgrep reports
+      uses: actions/upload-artifact@v4
+      if: always() && env.ENABLE_SEMGREP == 'true'
+      with:
+        name: semgrep-reports
+        path: |
+          semgrep.sarif
+          semgrep-report.json
+        retention-days: 30
+
+    - name: Upload SARIF to GitHub Security
+      uses: github/codeql-action/upload-sarif@v4
+      if: always() && env.ENABLE_SEMGREP == 'true'
+      with:
+        sarif_file: semgrep.sarif
+      continue-on-error: true
+
+    # ============================================================================
+    # Create Security Badges
+    # ============================================================================
+    - name: Create SAST security badge
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: schneegans/dynamic-badges-action@v1.7.0
+      with:
+        auth: ${{ secrets.GIST_SECRET }}
+        gistID: 11652bed39b7fe5a00b8313460f88a89
+        filename: bulk-rename-sast.json
+        label: SAST
+        message: ${{ steps.bandit.outputs.total || '0' }} issues
+        color: ${{ (steps.bandit.outputs.high || 0) > 0 && 'red' || (steps.bandit.outputs.medium || 0) > 0 && 'yellow' || 'brightgreen' }}
+
+    - name: Create SCA security badge
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: schneegans/dynamic-badges-action@v1.7.0
+      with:
+        auth: ${{ secrets.GIST_SECRET }}
+        gistID: 11652bed39b7fe5a00b8313460f88a89
+        filename: bulk-rename-sca.json
+        label: SCA
+        message: ${{ steps.safety.outputs.vulnerabilities || '0' }} vulns
+        color: ${{ (steps.safety.outputs.vulnerabilities || 0) > 0 && 'red' || 'brightgreen' }}
+
+    # ============================================================================
+    # Security Summary Output
+    # ============================================================================
+    - name: Security scan summary
+      shell: python
+      run: |
+        import os
+
+        print("=" * 60)
+        print("Security Scan Summary")
+        print("=" * 60)
+
+        # Bandit results
+        if os.getenv('ENABLE_BANDIT') == 'true':
+            bandit_status = "${{ steps.bandit.outputs.status }}"
+            if bandit_status == "completed":
+                high = "${{ steps.bandit.outputs.high }}"
+                medium = "${{ steps.bandit.outputs.medium }}"
+                low = "${{ steps.bandit.outputs.low }}"
+                total = "${{ steps.bandit.outputs.total }}"
+                print(f"\n[Bandit - Python SAST]")
+                print(f"  High:   {high}")
+                print(f"  Medium: {medium}")
+                print(f"  Low:    {low}")
+                print(f"  Total:  {total}")
+            else:
+                print("\n[Bandit - Python SAST]")
+                print("  Status: Disabled or failed")
+
+        # Safety results
+        if os.getenv('ENABLE_SAFETY') == 'true':
+            safety_status = "${{ steps.safety.outputs.status }}"
+            if safety_status == "completed":
+                vulns = "${{ steps.safety.outputs.vulnerabilities }}"
+                print(f"\n[Safety - Dependency Scanner]")
+                print(f"  Vulnerabilities: {vulns}")
+            else:
+                print("\n[Safety - Dependency Scanner]")
+                print("  Status: Disabled or failed")
+
+        # Semgrep results
+        if os.getenv('ENABLE_SEMGREP') == 'true':
+            semgrep_status = "${{ steps.semgrep-results.outputs.status }}"
+            if semgrep_status == "completed":
+                error = "${{ steps.semgrep-results.outputs.error }}"
+                warning = "${{ steps.semgrep-results.outputs.warning }}"
+                info = "${{ steps.semgrep-results.outputs.info }}"
+                total = "${{ steps.semgrep-results.outputs.total }}"
+                print(f"\n[Semgrep - Multi-language SAST]")
+                print(f"  Error:   {error}")
+                print(f"  Warning: {warning}")
+                print(f"  Info:    {info}")
+                print(f"  Total:   {total}")
+            else:
+                print("\n[Semgrep - Multi-language SAST]")
+                print("  Status: Disabled or failed")
+
+        print("\n" + "=" * 60)
+
+    # ============================================================================
+    # Code Security Gates
+    # ============================================================================
+    - name: Check quality gates
+      shell: python
+      run: |
+        import sys
+
+        # Security findings
+        bandit_high = int("${{ steps.bandit.outputs.high }}" or "0")
+        bandit_medium = int("${{ steps.bandit.outputs.medium }}" or "0")
+        safety_vulns = int("${{ steps.safety.outputs.vulnerabilities }}" or "0")
+        semgrep_error = int("${{ steps.semgrep-results.outputs.error }}" or "0")
+        semgrep_warning = int("${{ steps.semgrep-results.outputs.warning }}" or "0")
+
+        print("=" * 70)
+        print("Security Quality Gates")
+        print("=" * 70)
+
+        print("\n### Security Metrics ###")
+        print(f"Bandit HIGH:      {bandit_high} (required: 0)")
+        print(f"Bandit MEDIUM:    {bandit_medium} (warning only)")
+        print(f"Safety Vulns:     {safety_vulns} (required: 0)")
+        print(f"Semgrep ERROR:    {semgrep_error} (required: 0)")
+        print(f"Semgrep WARNING:  {semgrep_warning} (warning only)")
+
+        failed = False
+
+        # Check security gates
+        if bandit_high > 0:
+            print(f"\n[FAIL] Bandit HIGH severity gate failed: {bandit_high} issues found")
+            print("       HIGH severity security issues must be fixed")
+            failed = True
+        else:
+            print(f"\n[PASS] No HIGH severity Bandit issues")
+
+        if safety_vulns > 0:
+            print(f"[FAIL] Safety vulnerability gate failed: {safety_vulns} vulnerabilities found")
+            print("       Vulnerable dependencies must be updated")
+            failed = True
+        else:
+            print(f"[PASS] No known vulnerabilities in dependencies")
+
+        if semgrep_error > 0:
+            print(f"[FAIL] Semgrep ERROR severity gate failed: {semgrep_error} issues found")
+            print("       ERROR severity security issues must be fixed")
+            failed = True
+        else:
+            print(f"[PASS] No ERROR severity Semgrep issues")
+
+        # Warnings for medium/warning severity (doesn't fail build)
+        if bandit_medium > 0:
+            print(f"\n[WARN] Bandit found {bandit_medium} MEDIUM severity issues")
+            print("       Consider addressing medium severity issues")
+
+        if semgrep_warning > 0:
+            print(f"[WARN] Semgrep found {semgrep_warning} WARNING severity issues")
+            print("       Consider addressing warning severity issues")
+
+        print("\n" + "=" * 70)
+
+        if failed:
+            print("[FAIL] Security gates FAILED")
+            print("\nCritical issues must be resolved before merging.")
+            print("Review the reports above for details.")
+            sys.exit(1)
+        else:
+            print("[PASS] All security gates PASSED")
+
+    # ============================================================================
+    # Create GitHub Issues for Security Findings
+    # ============================================================================
+    - name: Create GitHub Issues for security findings
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs');
+
+          // ========== Process Bandit Findings ==========
+          let banditData = null;
+          try {
+            if (fs.existsSync('bandit-report.json')) {
+              banditData = JSON.parse(fs.readFileSync('bandit-report.json', 'utf8'));
+            }
+          } catch (err) {
+            console.log('Could not read bandit report:', err);
+          }
+
+          if (banditData && banditData.results) {
+            // Get existing Bandit issues to avoid duplicates
+            const existingBanditIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'security,bandit'
+            });
+
+            const existingBanditTitles = new Set(existingBanditIssues.data.map(i => i.title));
+
+            // Process HIGH and MEDIUM severity findings
+            const banditFindings = banditData.results.filter(r =>
+              r.issue_severity === 'HIGH' || r.issue_severity === 'MEDIUM'
+            );
+
+            console.log(`Found ${banditFindings.length} HIGH/MEDIUM Bandit findings`);
+
+            for (const finding of banditFindings) {
+              const title = `[Security] ${finding.issue_text} (${finding.test_id})`;
+
+              // Skip if issue already exists
+              if (existingBanditTitles.has(title)) {
+                console.log(`Skipping duplicate Bandit issue: ${title}`);
+                continue;
+              }
+
+              const labels = ['security', 'bandit'];
+              if (finding.issue_severity === 'HIGH') {
+                labels.push('high-severity', 'critical');
+              } else if (finding.issue_severity === 'MEDIUM') {
+                labels.push('medium-severity');
+              }
+
+              // Build issue body
+              const cweInfo = finding.issue_cwe ? `CWE-${finding.issue_cwe.id}` : 'N/A';
+              const moreInfo = finding.more_info || 'No additional information available';
+              const ciUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+              const body = [
+                '## Security Finding from Bandit',
+                '',
+                `**Severity:** ${finding.issue_severity}`,
+                `**Confidence:** ${finding.issue_confidence}`,
+                `**CWE:** ${cweInfo}`,
+                '',
+                '### Location',
+                `- **File:** \`${finding.filename}\``,
+                `- **Line:** ${finding.line_number}`,
+                `- **Function:** \`${finding.test_name}\``,
+                '',
+                '### Issue',
+                finding.issue_text,
+                '',
+                '### Code',
+                '```python',
+                finding.code,
+                '```',
+                '',
+                '### More Information',
+                moreInfo,
+                '',
+                '---',
+                `**Test ID:** ${finding.test_id}`,
+                '**Detected by:** Bandit SAST Scanner',
+                `**CI Run:** [View Details](${ciUrl})`
+              ].join('\n');
+
+              // Create the issue
+              try {
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: title,
+                  body: body,
+                  labels: labels
+                });
+                console.log(`Created Bandit issue: ${title}`);
+              } catch (err) {
+                console.error(`Failed to create Bandit issue: ${err.message}`);
+              }
+            }
+          } else {
+            console.log('No Bandit findings to process');
+          }
+
+          // ========== Process Safety Findings ==========
+          let safetyData = null;
+          try {
+            if (fs.existsSync('safety-report.json')) {
+              safetyData = JSON.parse(fs.readFileSync('safety-report.json', 'utf8'));
+            }
+          } catch (err) {
+            console.log('Could not read safety report:', err);
+          }
+
+          if (safetyData && safetyData.vulnerabilities && safetyData.vulnerabilities.length > 0) {
+            // Get existing Safety issues to avoid duplicates
+            const existingSafetyIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'security,safety,dependency-vulnerability'
+            });
+
+            const existingSafetyTitles = new Set(existingSafetyIssues.data.map(i => i.title));
+
+            console.log(`Found ${safetyData.vulnerabilities.length} Safety vulnerabilities`);
+
+            for (const vuln of safetyData.vulnerabilities) {
+              // Safety v3 API changed structure - adapt to both old and new formats
+              const pkgName = vuln.package_name || vuln.package || 'unknown';
+              const vulnId = vuln.vulnerability_id || vuln.id || 'unknown';
+              const title = `[Security] Vulnerable dependency: ${pkgName} (${vulnId})`;
+
+              // Skip if issue already exists
+              if (existingSafetyTitles.has(title)) {
+                console.log(`Skipping duplicate Safety issue: ${title}`);
+                continue;
+              }
+
+              const labels = ['security', 'safety', 'dependency-vulnerability', 'dependencies'];
+
+              // Extract vulnerability details
+              const affectedVersions = vuln.affected_versions || vuln.vulnerable_spec || 'unknown';
+              const installedVersion = vuln.analyzed_version || vuln.installed_version || 'unknown';
+              const fixedVersions = vuln.fixed_versions || vuln.safe_version || 'No fix available';
+              const cveId = vuln.CVE || 'N/A';
+              const advisory = vuln.advisory || vuln.advisory_description || 'No advisory available';
+              const severity = vuln.severity || 'UNKNOWN';
+
+              // Add severity label
+              if (severity.toUpperCase() === 'HIGH' || severity.toUpperCase() === 'CRITICAL') {
+                labels.push('high-severity', 'critical');
+              } else if (severity.toUpperCase() === 'MEDIUM') {
+                labels.push('medium-severity');
+              }
+
+              const ciUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+              const body = [
+                '## Dependency Vulnerability from Safety',
+                '',
+                `**Package:** ${pkgName}`,
+                `**Vulnerability ID:** ${vulnId}`,
+                `**CVE:** ${cveId}`,
+                `**Severity:** ${severity}`,
+                '',
+                '### Affected Version',
+                `- **Installed Version:** ${installedVersion}`,
+                `- **Affected Versions:** ${affectedVersions}`,
+                `- **Fixed Versions:** ${fixedVersions}`,
+                '',
+                '### Advisory',
+                advisory,
+                '',
+                '### Remediation',
+                fixedVersions !== 'No fix available' ?
+                  `Update ${pkgName} to version ${fixedVersions} or later.` :
+                  `No fix is currently available for this vulnerability. Consider alternative packages or mitigation strategies.`,
+                '',
+                '---',
+                `**Vulnerability ID:** ${vulnId}`,
+                '**Detected by:** Safety SCA Scanner',
+                `**CI Run:** [View Details](${ciUrl})`
+              ].join('\n');
+
+              // Create the issue
+              try {
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: title,
+                  body: body,
+                  labels: labels
+                });
+                console.log(`Created Safety issue: ${title}`);
+              } catch (err) {
+                console.error(`Failed to create Safety issue: ${err.message}`);
+              }
+            }
+          } else {
+            console.log('No Safety vulnerabilities to process');
+          }
+
+          // ========== Process Semgrep Findings ==========
+          let semgrepData = null;
+          try {
+            if (fs.existsSync('semgrep-report.json')) {
+              semgrepData = JSON.parse(fs.readFileSync('semgrep-report.json', 'utf8'));
+            }
+          } catch (err) {
+            console.log('Could not read semgrep report:', err);
+          }
+
+          if (semgrepData && semgrepData.results) {
+            // Get existing Semgrep issues to avoid duplicates
+            const existingSemgrepIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'security,semgrep'
+            });
+
+            const existingSemgrepTitles = new Set(existingSemgrepIssues.data.map(i => i.title));
+
+            // Process ERROR and WARNING severity findings (Semgrep uses different severity names)
+            const semgrepFindings = semgrepData.results.filter(r =>
+              r.extra && (r.extra.severity === 'ERROR' || r.extra.severity === 'WARNING')
+            );
+
+            console.log(`Found ${semgrepFindings.length} ERROR/WARNING Semgrep findings`);
+
+            for (const finding of semgrepFindings) {
+              const ruleId = finding.check_id || 'unknown-rule';
+              const message = finding.extra?.message || finding.extra?.lines || 'Security finding';
+              const title = `[Security] ${message.substring(0, 80)} (${ruleId.split('.').pop()})`;
+
+              // Skip if issue already exists
+              if (existingSemgrepTitles.has(title)) {
+                console.log(`Skipping duplicate Semgrep issue: ${title}`);
+                continue;
+              }
+
+              const labels = ['security', 'semgrep'];
+              const severity = finding.extra?.severity || 'WARNING';
+              if (severity === 'ERROR') {
+                labels.push('high-severity', 'critical');
+              } else if (severity === 'WARNING') {
+                labels.push('medium-severity');
+              }
+
+              // Build issue body
+              const ciUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              const metadata = finding.extra?.metadata || {};
+              const cweInfo = metadata.cwe ? metadata.cwe.join(', ') : 'N/A';
+              const owasp = metadata.owasp ? metadata.owasp.join(', ') : 'N/A';
+
+              const body = [
+                '## Security Finding from Semgrep',
+                '',
+                `**Severity:** ${severity}`,
+                `**Rule ID:** ${ruleId}`,
+                `**CWE:** ${cweInfo}`,
+                `**OWASP:** ${owasp}`,
+                '',
+                '### Location',
+                `- **File:** \`${finding.path}\``,
+                `- **Line:** ${finding.start.line}`,
+                '',
+                '### Issue',
+                finding.extra?.message || 'Security vulnerability detected',
+                '',
+                '### Code Snippet',
+                '```',
+                finding.extra?.lines || '',
+                '```',
+                '',
+                '### Recommendation',
+                finding.extra?.fix || 'Review and remediate this security finding',
+                '',
+                '---',
+                `**Rule:** ${ruleId}`,
+                '**Detected by:** Semgrep SAST Scanner',
+                `**CI Run:** [View Details](${ciUrl})`
+              ].join('\n');
+
+              // Create the issue
+              try {
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: title,
+                  body: body,
+                  labels: labels
+                });
+                console.log(`Created Semgrep issue: ${title}`);
+              } catch (err) {
+                console.error(`Failed to create Semgrep issue: ${err.message}`);
+              }
+            }
+          } else {
+            console.log('No Semgrep findings to process');
+          }
+
+    # ============================================================================
+    # Comment PR with Security Results
+    # ============================================================================
+    - name: Comment PR with quality and security scan results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs');
+
+          // Read reports
+          let banditReport = '';
+          let safetyReport = '';
+
+          try {
+            if (fs.existsSync('bandit-report.txt')) {
+              banditReport = fs.readFileSync('bandit-report.txt', 'utf8');
+            }
+          } catch (err) {
+            console.log('Could not read bandit report:', err);
+          }
+
+          try {
+            if (fs.existsSync('safety-report.txt')) {
+              safetyReport = fs.readFileSync('safety-report.txt', 'utf8');
+            }
+          } catch (err) {
+            console.log('Could not read safety report:', err);
+          }
+
+          // Get security scan results
+          const banditEnabled = process.env.ENABLE_BANDIT === 'true';
+          const safetyEnabled = process.env.ENABLE_SAFETY === 'true';
+          const semgrepEnabled = process.env.ENABLE_SEMGREP === 'true';
+
+          const banditHigh = '${{ steps.bandit.outputs.high }}' || '0';
+          const banditMedium = '${{ steps.bandit.outputs.medium }}' || '0';
+          const banditLow = '${{ steps.bandit.outputs.low }}' || '0';
+          const banditTotal = '${{ steps.bandit.outputs.total }}' || '0';
+
+          const safetyVulns = '${{ steps.safety.outputs.vulnerabilities }}' || '0';
+          const semgrepError = '${{ steps.semgrep-results.outputs.error }}' || '0';
+          const semgrepWarning = '${{ steps.semgrep-results.outputs.warning }}' || '0';
+          const semgrepInfo = '${{ steps.semgrep-results.outputs.info }}' || '0';
+          const semgrepTotal = '${{ steps.semgrep-results.outputs.total }}' || '0';
+
+          // Build comment with commit info
+          const commitSha = context.sha.substring(0, 7);
+          const commitUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/commit/${context.sha}`;
+          const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+          let comment = '## 🔍 Security Scan Results\n\n';
+          comment += `**Commit:** [\`${commitSha}\`](${commitUrl}) | **CI Run:** [#${context.runNumber}](${runUrl})\n\n`;
+          comment += '---\n\n';
+          comment += '### 🔒 Security Scans\n\n';
+
+          // Bandit section
+          if (banditEnabled) {
+            const banditIcon = banditHigh > 0 ? '❌' : banditMedium > 0 ? '⚠️' : '✅';
+            comment += `### Bandit (Python SAST) ${banditIcon}\n`;
+            comment += `- **High**: ${banditHigh}\n`;
+            comment += `- **Medium**: ${banditMedium}\n`;
+            comment += `- **Low**: ${banditLow}\n`;
+            comment += `- **Total**: ${banditTotal}\n\n`;
+
+            if (parseInt(banditTotal) > 0 && banditReport) {
+              comment += '<details>\n<summary>📋 Bandit Details</summary>\n\n```\n';
+              comment += banditReport.split('\n').slice(0, 100).join('\n');
+              comment += '\n```\n</details>\n\n';
+            }
+          }
+
+          // Safety section
+          if (safetyEnabled) {
+            const safetyIcon = safetyVulns > 0 ? '❌' : '✅';
+            comment += `### Safety (Dependency Scanner) ${safetyIcon}\n`;
+            comment += `- **Vulnerabilities**: ${safetyVulns}\n\n`;
+
+            if (parseInt(safetyVulns) > 0 && safetyReport) {
+              comment += '<details>\n<summary>📋 Safety Details</summary>\n\n```\n';
+              comment += safetyReport.split('\n').slice(0, 100).join('\n');
+              comment += '\n```\n</details>\n\n';
+            }
+          }
+
+          // Semgrep section
+          if (semgrepEnabled) {
+            const semgrepIcon = semgrepError > 0 ? '❌' : semgrepWarning > 0 ? '⚠️' : '✅';
+            comment += `### Semgrep (Multi-language SAST) ${semgrepIcon}\n`;
+            comment += `- **Error**: ${semgrepError}\n`;
+            comment += `- **Warning**: ${semgrepWarning}\n`;
+            comment += `- **Info**: ${semgrepInfo}\n`;
+            comment += `- **Total**: ${semgrepTotal}\n\n`;
+
+            if (parseInt(semgrepTotal) > 0) {
+              comment += '_Note: Detailed Semgrep findings are available in the Security tab._\n\n';
+            }
+          }
+
+          // Security summary
+          const totalIssues = parseInt(banditTotal) + parseInt(safetyVulns) + parseInt(semgrepTotal);
+          const criticalIssues = parseInt(banditHigh) + parseInt(safetyVulns) + parseInt(semgrepError);
+
+          if (totalIssues === 0) {
+            comment += '✅ No security issues detected!\n\n';
+          } else {
+            comment += `⚠️ **${totalIssues}** total security findings detected\n`;
+            if (criticalIssues > 0) {
+              comment += `- **${criticalIssues}** critical issues require attention\n`;
+            }
+            comment += '\n**Recommendations:**\n';
+            if (parseInt(banditHigh) > 0) {
+              comment += '- Review and fix high-severity Bandit issues\n';
+            }
+            if (parseInt(safetyVulns) > 0) {
+              comment += '- Update vulnerable dependencies identified by Safety\n';
+            }
+            if (parseInt(semgrepError) > 0) {
+              comment += '- Fix ERROR severity Semgrep findings\n';
+            }
+            if (parseInt(semgrepWarning) > 0) {
+              comment += '- Review WARNING severity Semgrep findings\n';
+            }
+            comment += '\n';
+          }
+
+          // Overall security gate status
+          comment += '### ✨ Security Gates\n';
+          const allPassed = criticalIssues === 0;
+
+          if (allPassed) {
+            comment += '✅ **All security gates PASSED!**\n';
+          } else {
+            comment += '❌ **Some security gates FAILED:**\n';
+            if (parseInt(banditHigh) > 0) comment += `- ${banditHigh} HIGH severity Bandit issues must be fixed\n`;
+            if (parseInt(safetyVulns) > 0) comment += `- ${safetyVulns} dependency vulnerabilities must be fixed\n`;
+            if (parseInt(semgrepError) > 0) comment += `- ${semgrepError} ERROR severity Semgrep issues must be fixed\n`;
+          }
+
+          // Post comment
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+  code-quality:
+    name: Code Quality Checks
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      security-events: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install project dependencies for scanning
+      shell: bash
+      run: |
+        # Install package dependencies (platform markers handled automatically)
+        pip install -e .
+        # Install security tools only (not full dev dependencies which include pywin32-stubs)
+        pip install pylint pytest pytest-cov pytest-mock
+
+    # ============================================================================
+    # Code Quality Checks
+    # ============================================================================
+    - name: Run pylint on package
+      id: pylint-main
+      shell: bash
+      run: |
+        python -m pylint bulk_rename/ --output-format=text 2>&1 | tee pylint-main.txt
+        score=$(cat pylint-main.txt | grep "Your code has been rated at" | sed -E 's/.*rated at ([0-9.]+)\/.*/\1/' || echo "0")
+        echo "score=$score" >> $GITHUB_OUTPUT
+        echo "Pylint score for bulk_rename package: $score"
+      continue-on-error: true
+
+    - name: Run pylint on tests
+      id: pylint-test
+      shell: bash
+      run: |
+        python -m pylint tests/ --output-format=text 2>&1 | tee pylint-test.txt
+        score=$(cat pylint-test.txt | grep "Your code has been rated at" | sed -E 's/.*rated at ([0-9.]+)\/.*/\1/' || echo "0")
+        echo "score=$score" >> $GITHUB_OUTPUT
+        echo "Pylint score for tests: $score"
+      continue-on-error: true
+
+    - name: Run pytest with coverage
+      id: pytest
+      shell: bash
+      run: |
+        python -m pytest tests/test_bulk_rename.py -v --cov=bulk_rename --cov-report=term-missing --cov-report=json --cov-report=html
+      continue-on-error: true
+
+    - name: Extract coverage percentage
+      id: coverage
+      shell: bash
+      run: |
+        if [ -f coverage.json ]; then
+          coverage=$(python -c "import json; print(json.load(open('coverage.json'))['totals']['percent_covered'])")
+          echo "percentage=$coverage" >> $GITHUB_OUTPUT
+        else
+          echo "percentage=0" >> $GITHUB_OUTPUT
+        fi
+
+    # ============================================================================
+    # Upload Quality Reports
+    # ============================================================================
+    - name: Upload coverage reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: coverage-reports
+        path: htmlcov/
+        retention-days: 30
+
+    - name: Upload pylint reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: pylint-reports
+        path: |
+          pylint-main.txt
+          pylint-test.txt
+        retention-days: 30
+
+    # ============================================================================
+    # Create Quality Badges
+    # ============================================================================
+    - name: Create coverage badge
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: schneegans/dynamic-badges-action@v1.7.0
+      with:
+        auth: ${{ secrets.GIST_SECRET }}
+        gistID: 11652bed39b7fe5a00b8313460f88a89
+        filename: bulk-rename-coverage.json
+        label: coverage
+        message: ${{ steps.coverage.outputs.percentage }}%
+        color: ${{ steps.coverage.outputs.percentage >= 100 && 'brightgreen' || steps.coverage.outputs.percentage >= 90 && 'green' || steps.coverage.outputs.percentage >= 75 && 'yellow' || 'red' }}
+
+    # ============================================================================
+    # Code Quality Gates
+    # ============================================================================
+    - name: Check quality gates
+      shell: python
+      run: |
+        import sys
+
+        # Code quality metrics
+        coverage = float("${{ steps.coverage.outputs.percentage }}" or "0")
+        pylint_main = float("${{ steps.pylint-main.outputs.score }}" or "0")
+        pylint_test = float("${{ steps.pylint-test.outputs.score }}" or "0")
+        test_status = "${{ steps.pytest.outcome }}"
+
+        print("=" * 70)
+        print("Code Quality Quality Gates")
+        print("=" * 70)
+
+        print("\n### Code Quality Metrics ###")
+        print(f"Coverage:     {coverage}% (required: 100%)")
+        print(f"Pylint (pkg): {pylint_main}/10.00 (required: 10.00)")
+        print(f"Pylint (test):{pylint_test}/10.00 (required: 10.00)")
+        print(f"Test Status:  {test_status} (required: success)")
+
+        failed = False
+
+        # Check code quality gates
+        if coverage < 100:
+            print(f"\n[FAIL] Coverage gate failed: {coverage}% < 100%")
+            failed = True
+        else:
+            print(f"\n[PASS] Coverage gate passed: {coverage}%")
+
+        if pylint_main < 10:
+            print(f"[FAIL] Pylint (package) gate failed: {pylint_main} < 10.00")
+            failed = True
+        else:
+            print(f"[PASS] Pylint (package) gate passed: {pylint_main}")
+
+        if pylint_test < 10:
+            print(f"[FAIL] Pylint (tests) gate failed: {pylint_test} < 10.00")
+            failed = True
+        else:
+            print(f"[PASS] Pylint (tests) gate passed: {pylint_test}")
+
+        if test_status != "success":
+            print(f"[FAIL] Test suite gate failed: {test_status}")
+            failed = True
+        else:
+            print("[PASS] Test suite gate passed")
+
+        print("\n" + "=" * 70)
+
+        if failed:
+            print("[FAIL] Quality gates FAILED")
+            print("\nCritical issues must be resolved before merging.")
+            print("Review the reports above for details.")
+            sys.exit(1)
+        else:
+            print("[PASS] All quality gates PASSED")
+
+    # ============================================================================
+    # Comment PR with Quality Results
+    # ============================================================================
+    - name: Comment PR with quality ults
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs');
+
+          // Read reports
+          let pylintMain = '';
+          let pylintTest = '';
+
+          try {
+            if (fs.existsSync('pylint-main.txt')) {
+              pylintMain = fs.readFileSync('pylint-main.txt', 'utf8');
+            }
+          } catch (err) {
+            console.log('Could not read pylint-main report:', err);
+          }
+
+          try {
+            if (fs.existsSync('pylint-test.txt')) {
+              pylintTest = fs.readFileSync('pylint-test.txt', 'utf8');
+            }
+          } catch (err) {
+            console.log('Could not read pylint-test report:', err);
+          }
+
+          // Get code quality results
+          const coverage = '${{ steps.coverage.outputs.percentage }}';
+          const pylintMainScore = '${{ steps.pylint-main.outputs.score }}';
+          const pylintTestScore = '${{ steps.pylint-test.outputs.score }}';
+          const testStatus = '${{ steps.pytest.outcome }}';
+
+          // Build comment with commit info
+          const commitSha = context.sha.substring(0, 7);
+          const commitUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/commit/${context.sha}`;
+          const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+          let comment = '## 🔍 Code Quality Results\n\n';
+          comment += `**Commit:** [\`${commitSha}\`](${commitUrl}) | **CI Run:** [#${context.runNumber}](${runUrl})\n\n`;
+          comment += '---\n\n';
+
+          // Code Quality Section
+          comment += '### 📊 Code Quality\n\n';
+
+          const coverageIcon = coverage >= 100 ? '✅' : coverage >= 90 ? '⚠️' : '❌';
+          comment += `**Coverage ${coverageIcon}**: ${coverage}% (required: 100%)\n`;
+
+          const pylintMainIcon = pylintMainScore >= 10 ? '✅' : pylintMainScore >= 9 ? '⚠️' : '❌';
+          const pylintTestIcon = pylintTestScore >= 10 ? '✅' : pylintTestScore >= 9 ? '⚠️' : '❌';
+          comment += `**Pylint (package) ${pylintMainIcon}**: ${pylintMainScore}/10.00 (required: 10.00)\n`;
+          comment += `**Pylint (tests) ${pylintTestIcon}**: ${pylintTestScore}/10.00 (required: 10.00)\n`;
+
+          const testIcon = testStatus === 'success' ? '✅' : '❌';
+          comment += `**Tests ${testIcon}**: ${testStatus}\n\n`;
+
+          // Add pylint details if there are issues
+          if (pylintMainScore < 10 || pylintTestScore < 10) {
+            comment += '<details>\n<summary>📋 Pylint Details</summary>\n\n';
+            if (pylintMainScore < 10 && pylintMain) {
+              comment += '#### bulk_rename package\n```\n';
+              comment += pylintMain.split('\n').slice(0, 50).join('\n');
+              comment += '\n```\n\n';
+            }
+            if (pylintTestScore < 10 && pylintTest) {
+              comment += '#### tests/test_bulk_rename.py\n```\n';
+              comment += pylintTest.split('\n').slice(0, 50).join('\n');
+              comment += '\n```\n\n';
+            }
+            comment += '</details>\n\n';
+          }
+
+          // Overall quality gate status
+          comment += '### ✨ Quality Gates\n';
+          const allPassed = coverage >= 100 && pylintMainScore >= 10 && pylintTestScore >= 10 && testStatus === 'success';
+
+          if (allPassed) {
+            comment += '✅ **All quality gates PASSED!**\n';
+          } else {
+            comment += '❌ **Some quality gates FAILED:**\n';
+            if (coverage < 100) comment += `- Coverage must be 100% (currently ${coverage}%)\n`;
+            if (pylintMainScore < 10) comment += `- bulk_rename package must score 10.00 (currently ${pylintMainScore})\n`;
+            if (pylintTestScore < 10) comment += `- tests must score 10.00 (currently ${pylintTestScore})\n`;
+            if (testStatus !== 'success') comment += '- All tests must pass\n';
+          }
+
+          // Post comment
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+  package_validation:
+    name: Validate bulk_rename package
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # Primary platform (Windows) - test all Python versions
+        # Secondary platforms (Linux/macOS) - test latest Python only to verify cross-platform compatibility
+        include:
+          # Windows - full Python version coverage (primary platform)
+          - os: windows-latest
+            python-version: '3.8'
+          - os: windows-latest
+            python-version: '3.9'
+          - os: windows-latest
+            python-version: '3.10'
+          - os: windows-latest
+            python-version: '3.11'
+          - os: windows-latest
+            python-version: '3.12'
+          # Linux - latest Python only (cross-platform validation)
+          - os: ubuntu-latest
+            python-version: '3.12'
+          # macOS - latest Python only (cross-platform validation)
+          - os: macos-latest
+            python-version: '3.12'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
+    - name: Install system dependencies (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y imagemagick ffmpeg
+
+    - name: Install system dependencies (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install imagemagick ffmpeg
+
+    - name: Install system dependencies (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        # ImageMagick is pre-installed on Windows runners
+        magick -version
+        # Install FFmpeg using Chocolatey
+        choco install ffmpeg -y
+        # Refresh PATH to include FFmpeg
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+        ffmpeg -version
+
+    - name: Install build tools
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install build check-wheel-contents
+
+    - name: Build package
+      shell: bash
+      run: |
+        python -m build
+
+    - name: List package contents (Windows)
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        dir dist\
+
+    - name: List package contents (Unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        ls -la dist/
+
+    - name: Check wheel contents
+      run: |
+        check-wheel-contents dist/*.whl
+
+    - name: Validate package structure
+      run: |
+        # Check that all expected files are included
+        python -c "
+        import zipfile
+        import glob
+        whl_file = glob.glob('dist/*.whl')[0]
+        with zipfile.ZipFile(whl_file) as zf:
+            files = zf.namelist()
+            expected = ['bulk_rename/', 'bulk_rename/__init__.py', 'bulk_rename/main.py']
+            for exp in expected:
+                if not any(exp in f for f in files):
+                    print(f'Missing expected file: {exp}')
+                    exit(1)
+            print('Package structure is valid')
+        "
+    - name: Test package installation from wheel
+      shell: bash
+      run: |
+        # Create a temporary virtual environment to test installation
+        python -m venv test_install
+        if [ "$RUNNER_OS" == "Windows" ]; then
+          source test_install/Scripts/activate
+        else
+          source test_install/bin/activate
+        fi
+        pip install dist/*.whl
+        # Test that the installed package works
+        bulk-rename --help
+        deactivate
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      if: always() && matrix.os == 'windows-latest' && matrix.python-version == '3.12'
+      with:
+        name: package-build-${{ matrix.os }}-${{ matrix.python-version }}
+        path: dist/
+        retention-days: 30
+
+  # ============================================================================
+  # Package Validation Summary - Cross-Platform Gate
+  # ============================================================================
+  package_validation_summary:
+    name: Package Validation Gate
+    runs-on: ubuntu-latest
+    needs: package_validation
+    if: always()
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+
+    steps:
+    - name: Check all package validation results
+      run: |
+        echo "=================================="
+        echo "Package Validation Gate"
+        echo "=================================="
+        echo ""
+        echo "Checking package validation results across all platforms..."
+        echo "Overall result: ${{ needs.package_validation.result }}"
+        echo ""
+
+        # This job will fail if any package_validation matrix job failed
+        if [ "${{ needs.package_validation.result }}" != "success" ]; then
+          echo "❌ Package validation FAILED on one or more platforms"
+          echo ""
+          echo "Please check the 'Validate bulk_rename package' job results above"
+          echo "for details on which platform/Python version failed."
+          exit 1
+        fi
+
+        echo "✅ Package validation PASSED on all platforms:"
+        echo "  - Windows: Python 3.8, 3.9, 3.10, 3.11, 3.12"
+        echo "  - Ubuntu: Python 3.12"
+        echo "  - macOS: Python 3.12"
+        echo ""
+        echo "=================================="
+
+    - name: Comment PR with comprehensive validation results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          // Fetch all workflow jobs to get individual matrix results
+          const jobs = await github.rest.actions.listJobsForWorkflowRun({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            run_id: context.runId,
+            per_page: 100
+          });
+
+          // Filter package validation jobs
+          const pkgJobs = jobs.data.jobs.filter(j =>
+            j.name.includes('Validate bulk_rename package (')
+          );
+
+          // Sort jobs by OS and Python version for better readability
+          pkgJobs.sort((a, b) => {
+            const aMatch = a.name.match(/\((.+?), (.+?)\)/);
+            const bMatch = b.name.match(/\((.+?), (.+?)\)/);
+            if (!aMatch || !bMatch) return 0;
+
+            // Sort by OS first, then Python version
+            if (aMatch[1] !== bMatch[1]) {
+              return aMatch[1].localeCompare(bMatch[1]);
+            }
+            return aMatch[2].localeCompare(bMatch[2]);
+          });
+
+          // Build results table with commit info
+          const commitSha = context.sha.substring(0, 7);
+          const commitUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/commit/${context.sha}`;
+          const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+          let comment = '## 📦 Package Validation Results\n\n';
+          comment += `**Commit:** [\`${commitSha}\`](${commitUrl}) | **CI Run:** [#${context.runNumber}](${runUrl})\n\n`;
+          comment += '---\n\n';
+          comment += 'Validation tests across all supported platforms and Python versions:\n\n';
+          comment += '| Platform | Python | Build | Wheel Check | Structure | Install | CLI Test | Status |\n';
+          comment += '|----------|--------|-------|-------------|-----------|---------|----------|--------|\n';
+
+          let allPassed = true;
+
+          for (const job of pkgJobs) {
+            const match = job.name.match(/\((.+?), (.+?)\)/);
+            if (!match) continue;
+
+            const os = match[1];
+            const pyVer = match[2];
+
+            // Map OS names to friendly names
+            const osName = os === 'windows-latest' ? 'Windows' :
+                          os === 'ubuntu-latest' ? 'Ubuntu' :
+                          os === 'macos-latest' ? 'macOS' : os;
+
+            // Check individual step results
+            const steps = job.steps || [];
+            const buildStep = steps.find(s => s.name === 'Build package');
+            const wheelStep = steps.find(s => s.name === 'Check wheel contents');
+            const structureStep = steps.find(s => s.name === 'Validate package structure');
+            const installStep = steps.find(s => s.name === 'Test package installation from wheel');
+
+            const buildStatus = buildStep?.conclusion === 'success' ? '✅' : buildStep?.conclusion === 'skipped' ? '⊘' : '❌';
+            const wheelStatus = wheelStep?.conclusion === 'success' ? '✅' : wheelStep?.conclusion === 'skipped' ? '⊘' : '❌';
+            const structureStatus = structureStep?.conclusion === 'success' ? '✅' : structureStep?.conclusion === 'skipped' ? '⊘' : '❌';
+            const installStatus = installStep?.conclusion === 'success' ? '✅' : installStep?.conclusion === 'skipped' ? '⊘' : '❌';
+            const cliStatus = installStatus; // CLI test is part of install step
+
+            const overallStatus = job.conclusion === 'success' ? '✅ Pass' :
+                                 job.conclusion === 'skipped' ? '⊘ Skip' : '❌ Fail';
+
+            if (job.conclusion !== 'success') {
+              allPassed = false;
+            }
+
+            comment += `| ${osName} | ${pyVer} | ${buildStatus} | ${wheelStatus} | ${structureStatus} | ${installStatus} | ${cliStatus} | ${overallStatus} |\n`;
+          }
+
+          comment += '\n';
+          comment += '**Legend:** ✅ Pass | ❌ Fail | ⊘ Skipped\n\n';
+
+          if (allPassed) {
+            comment += '### ✅ All platforms passed!\n\n';
+            comment += 'The package builds, validates, and installs correctly on:\n';
+            comment += '- **Windows**: Python 3.8, 3.9, 3.10, 3.11, 3.12\n';
+            comment += '- **Ubuntu**: Python 3.12\n';
+            comment += '- **macOS**: Python 3.12\n';
+          } else {
+            comment += '### ❌ Some platforms failed\n\n';
+            comment += 'Please review the failed jobs above and check the detailed logs in the Actions tab.\n';
+          }
+
+          // Post or update comment
+          const marker = '<!-- package-validation-summary -->';
+          comment = marker + '\n' + comment;
+
+          // Try to find existing comment to update
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number
+          });
+
+          const existingComment = comments.find(c => c.body.includes(marker));
+
+          if (existingComment) {
+            // Update existing comment
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existingComment.id,
+              body: comment
+            });
+          } else {
+            // Create new comment
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+          }

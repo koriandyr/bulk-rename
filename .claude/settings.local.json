@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pip install:*)",
+      "Bash(bulk-rename:*)",
+      "Bash(python -m pytest tests/test_bulk_rename.py -v --tb=short)",
+      "Bash(python -m pylint:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python -m build:*)",
+      "Bash(python:*)",
+      "Bash(ls:*)"
+    ]
+  }
+}
