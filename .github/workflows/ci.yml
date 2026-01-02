@@ -133,8 +133,8 @@ jobs:
 
         # Run semgrep with both SARIF and JSON output
         # --metrics=off disables telemetry to avoid permission warnings
-        semgrep scan --config=auto --sarif --output=semgrep.sarif --metrics=off . || true
-        semgrep scan --config=auto --json --output=semgrep-report.json --metrics=off . || true
+        semgrep scan --config=p/default --sarif --output=semgrep.sarif --metrics=off . || true
+        semgrep scan --config=p/default --json --output=semgrep-report.json --metrics=off . || true
 
         echo "Semgrep scan completed"
       continue-on-error: true
