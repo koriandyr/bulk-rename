@@ -819,6 +819,46 @@ class TestConvertFiles:
         assert mov_count == 0
         assert metadata[0].was_converted is False
 
+    def test_no_convert_flag_skips_conversions(self, mock_logger, tmp_path):
+        heic_file = tmp_path / "test.heic"
+        mov_file = tmp_path / "test.mov"
+        heic_file.write_bytes(b"heic")
+        mov_file.write_bytes(b"mov")
+
+        metadata = [
+            FileMetadata(
+                original_path=heic_file,
+                timestamp=datetime.now(timezone.utc),
+                extension=".heic",
+                original_name="test.heic",
+                metadata_reliable=True,
+                timestamp_source="EXIF",
+            ),
+            FileMetadata(
+                original_path=mov_file,
+                timestamp=datetime.now(timezone.utc),
+                extension=".mov",
+                original_name="test.mov",
+                metadata_reliable=True,
+                timestamp_source="propsys",
+            )
+        ]
+
+        with patch("bulk_rename.main.convert_heic_to_jpg") as mock_heic:
+            with patch("bulk_rename.main.convert_mov_to_mp4") as mock_mov:
+                heic_count, mov_count = convert_files(
+                    metadata, commit=True, logger=mock_logger, no_convert=True
+                )
+                assert heic_count == 0
+                assert mov_count == 0
+                assert metadata[0].was_converted is False
+                assert metadata[1].was_converted is False
+                mock_heic.assert_not_called()
+                mock_mov.assert_not_called()
+                mock_logger.info.assert_called_with(
+                    "Skipping Apple file conversion (--no-convert flag set)"
+                )
+
 
 # =============================================================================
 # Tests for parse_filename_date
@@ -1083,6 +1123,39 @@ class TestLogSummary:
         calls = [str(c) for c in mock_logger.info.call_args_list]
         assert any("Would rename" in c for c in calls)
 
+    def test_no_convert_flag_skips_conversion_logs(self, mock_logger):
+        metadata = [
+            FileMetadata(
+                original_path=Path("/test/file.jpg"),
+                timestamp=datetime.now(timezone.utc),
+                extension=".jpg",
+                original_name="file.jpg",
+                metadata_reliable=True,
+                timestamp_source="EXIF",
+            )
+        ]
+        stats = ProcessingStats(
+            heic_count=0,
+            mov_count=0,
+            rename_count=1,
+            commit=True,
+            no_convert=True,
+            elapsed=timedelta(seconds=5),
+        )
+
+        log_summary(metadata, stats, mock_logger)
+
+        # Verify conversion stats are NOT logged
+        calls = [str(c) for c in mock_logger.info.call_args_list]
+        assert not any("Converted" in c for c in calls)
+        assert not any(".heic files to .jpg" in c for c in calls)
+        assert not any(".mov files to .mp4" in c for c in calls)
+        assert not any("were converted files" in c for c in calls)
+
+        # Verify standard stats are still logged
+        assert any("Evaluated" in c for c in calls)
+        assert any("Renamed" in c for c in calls)
+
 
 # =============================================================================
 # Tests for process_folder
@@ -1169,6 +1242,15 @@ class TestMain:
                     main()
                 mock_process.assert_called_once()
                 assert mock_process.call_args[0][1] is True  # commit=True
+
+    def test_no_convert_flag(self, tmp_path):
+        with patch("sys.argv", ["bulk-rename", "--folder", str(tmp_path), "--no-convert"]):
+            with patch("bulk_rename.main.process_folder") as mock_process:
+                mock_process.return_value = 0
+                with pytest.raises(SystemExit):
+                    main()
+                mock_process.assert_called_once()
+                assert mock_process.call_args[0][3] is True  # no_convert=True
 
 
 # =============================================================================
