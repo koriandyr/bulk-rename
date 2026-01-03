@@ -88,6 +88,7 @@ class ProcessingStats:
     mov_count: int = 0
     rename_count: int = 0
     commit: bool = False
+    no_convert: bool = False
     elapsed: timedelta = field(default_factory=timedelta)
 
 
@@ -472,14 +473,25 @@ def parse_filename_date(filename: str) -> Optional[datetime]:
 
 def convert_files(metadata_list: list[FileMetadata],
                   commit: bool,
-                  logger: logging.Logger) -> tuple[int, int]:
+                  logger: logging.Logger,
+                  no_convert: bool = False) -> tuple[int, int]:
     """Convert HEIC to JPG and MOV to MP4, updating metadata entries in place.
+
+    Args:
+        metadata_list: List of file metadata to process.
+        commit: If True, perform conversions. If False, dry run.
+        logger: Logger instance.
+        no_convert: If True, skip all Apple file conversions.
 
     Returns:
         Tuple of (heic_count, mov_count) conversions performed.
     """
     heic_count = 0
     mov_count = 0
+
+    if no_convert:
+        logger.info("Skipping Apple file conversion (--no-convert flag set)")
+        return heic_count, mov_count
 
     for entry in metadata_list:
         ext = entry.extension.lower()
@@ -595,14 +607,18 @@ def log_summary(metadata_list: list[FileMetadata],
         stats: Processing statistics.
         logger: Logger instance.
     """
-    total_converted = stats.heic_count + stats.mov_count
-    logger.info("\nConverted %d files total", total_converted)
-    logger.info("  - %d .heic files to .jpg", stats.heic_count)
-    logger.info("  - %d .mov files to .mp4", stats.mov_count)
+    logger.info("")
+    if not stats.no_convert:
+        total_converted = stats.heic_count + stats.mov_count
+        logger.info("Converted %d files total", total_converted)
+        logger.info("  - %d .heic files to .jpg", stats.heic_count)
+        logger.info("  - %d .mov files to .mp4", stats.mov_count)
 
-    converted_entries = sum(1 for e in metadata_list if e.was_converted)
-    logger.info("Evaluated %d entries for renaming", len(metadata_list))
-    logger.info("  - %d were converted files", converted_entries)
+        converted_entries = sum(1 for e in metadata_list if e.was_converted)
+        logger.info("Evaluated %d entries for renaming", len(metadata_list))
+        logger.info("  - %d were converted files", converted_entries)
+    else:
+        logger.info("Evaluated %d entries for renaming", len(metadata_list))
 
     if stats.commit:
         logger.info("Renamed %d files", stats.rename_count)
@@ -620,13 +636,16 @@ def log_summary(metadata_list: list[FileMetadata],
     logger.info("Finished in %s seconds", stats.elapsed)
 
 
-def process_folder(folder: str, commit: bool, logger: logging.Logger) -> int:
+def process_folder(folder: str,
+                   commit: bool,
+                   logger: logging.Logger,
+                   no_convert: bool = False) -> int:
     """
     Processes a folder of media files by converting and renaming them based on metadata.
 
     This function performs three main tasks:
     1. Collects metadata from all files in the folder.
-    2. Converts `.heic` files to `.jpg` and `.mov` files to `.mp4`.
+    2. Converts `.heic` files to `.jpg` and `.mov` files to `.mp4` (unless --no-convert).
     3. Renames files that match known patterns using their metadata timestamp.
 
     Files are renamed to the format: `YYYYMMDD-<sequence><extra_text>`, where:
@@ -638,6 +657,7 @@ def process_folder(folder: str, commit: bool, logger: logging.Logger) -> int:
         folder (str): Absolute or relative path to the folder containing media files.
         commit (bool): If True, apply changes to disk. If False, simulate actions.
         logger (logging.Logger): Logger instance for recording progress.
+        no_convert (bool): If True, skip Apple file conversion.
 
     Returns:
         int: Exit code. Returns 0 on success.
@@ -651,7 +671,7 @@ def process_folder(folder: str, commit: bool, logger: logging.Logger) -> int:
                  if f.is_file() and f.suffix.lower() in ALLOWED_SUFFIXES]
 
     metadata_list = collect_file_metadata(file_list=file_list, logger=logger)
-    heic_count, mov_count = convert_files(metadata_list, commit, logger)
+    heic_count, mov_count = convert_files(metadata_list, commit, logger, no_convert)
     rename_count = rename_files(metadata_list, folder_path, commit, logger)
 
     stats = ProcessingStats(
@@ -659,6 +679,7 @@ def process_folder(folder: str, commit: bool, logger: logging.Logger) -> int:
         mov_count=mov_count,
         rename_count=rename_count,
         commit=commit,
+        no_convert=no_convert,
         elapsed=timedelta(seconds=timer() - start)
     )
     log_summary(metadata_list, stats, logger)
@@ -690,10 +711,17 @@ def main():
         default=False,
         help='Enable verbose (DEBUG) logging'
     )
+    parser.add_argument(
+        '--no-convert',
+        action='store_true',
+        default=False,
+        help='Skip Apple file conversion (HEIC to JPG and MOV to MP4)'
+    )
     args = parser.parse_args()
 
     folder = args.folder.strip()
     commit = args.commit
+    no_convert = args.no_convert
 
     if not os.path.isdir(folder):
         print(f"Invalid folder: {folder}")
@@ -703,7 +731,7 @@ def main():
     logger = setup_logger(script_name, verbose=args.verbose)
     logger.info("*** Starting script: %s ***", script_name)
 
-    sys.exit(process_folder(folder, commit, logger))
+    sys.exit(process_folder(folder, commit, logger, no_convert))
 
 if __name__ == '__main__':  # pragma: no cover
     main()
