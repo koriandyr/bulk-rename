@@ -7,4 +7,4 @@ pytest-mock>=3.15.1
 
 # Security scanning tools
 bandit[toml]>=1.8.6
-safety>=3.8.0
+safety>=3.8.1
