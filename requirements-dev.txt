@@ -1,7 +1,7 @@
 -r requirements.txt
 pylint>=4.0.6
 pywin32-stubs>=1.0.8; sys_platform == 'win32'
-pytest>=8.4.2
+pytest>=9.1.1
 pytest-cov>=7.1.0
 pytest-mock>=3.15.1
 
