@@ -40,10 +40,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
       with:
         python-version: '3.11'
         cache: 'pip'
@@ -172,7 +172,7 @@ jobs:
     # Upload Security Reports
     # ============================================================================
     - name: Upload Bandit reports
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       if: always() && env.ENABLE_BANDIT == 'true'
       with:
         name: bandit-reports
@@ -182,7 +182,7 @@ jobs:
         retention-days: 30
 
     - name: Upload Safety reports
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       if: always() && env.ENABLE_SAFETY == 'true'
       with:
         name: safety-reports
@@ -192,7 +192,7 @@ jobs:
         retention-days: 30
 
     - name: Upload Semgrep reports
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       if: always() && env.ENABLE_SEMGREP == 'true'
       with:
         name: semgrep-reports
@@ -202,7 +202,7 @@ jobs:
         retention-days: 30
 
     - name: Upload SARIF to GitHub Security
-      uses: github/codeql-action/upload-sarif@v4
+      uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4
       if: always() && env.ENABLE_SEMGREP == 'true'
       with:
         sarif_file: semgrep.sarif
@@ -213,7 +213,7 @@ jobs:
     # ============================================================================
     - name: Create SAST security badge
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      uses: schneegans/dynamic-badges-action@v1.7.0
+      uses: schneegans/dynamic-badges-action@e9a478b16159b4d31420099ba146cdc50f134483 # v1.7.0
       with:
         auth: ${{ secrets.GIST_SECRET }}
         gistID: 11652bed39b7fe5a00b8313460f88a89
@@ -224,7 +224,7 @@ jobs:
 
     - name: Create SCA security badge
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      uses: schneegans/dynamic-badges-action@v1.7.0
+      uses: schneegans/dynamic-badges-action@e9a478b16159b4d31420099ba146cdc50f134483 # v1.7.0
       with:
         auth: ${{ secrets.GIST_SECRET }}
         gistID: 11652bed39b7fe5a00b8313460f88a89
@@ -366,7 +366,7 @@ jobs:
     # ============================================================================
     - name: Create GitHub Issues for security findings
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      uses: actions/github-script@v7
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
@@ -672,7 +672,7 @@ jobs:
     # ============================================================================
     - name: Comment PR with quality and security scan results
       if: github.event_name == 'pull_request'
-      uses: actions/github-script@v7
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
@@ -826,10 +826,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
       with:
         python-version: '3.11'
         cache: 'pip'
@@ -887,7 +887,7 @@ jobs:
     # Upload Quality Reports
     # ============================================================================
     - name: Upload coverage reports
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       if: always()
       with:
         name: coverage-reports
@@ -895,7 +895,7 @@ jobs:
         retention-days: 30
 
     - name: Upload pylint reports
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       if: always()
       with:
         name: pylint-reports
@@ -909,7 +909,7 @@ jobs:
     # ============================================================================
     - name: Create coverage badge
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      uses: schneegans/dynamic-badges-action@v1.7.0
+      uses: schneegans/dynamic-badges-action@e9a478b16159b4d31420099ba146cdc50f134483 # v1.7.0
       with:
         auth: ${{ secrets.GIST_SECRET }}
         gistID: 11652bed39b7fe5a00b8313460f88a89
@@ -984,7 +984,7 @@ jobs:
     # ============================================================================
     - name: Comment PR with quality results
       if: github.event_name == 'pull_request'
-      uses: actions/github-script@v7
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
@@ -1107,10 +1107,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'pip'
@@ -1198,7 +1198,7 @@ jobs:
         deactivate
 
     - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       if: always() && matrix.os == 'windows-latest' && matrix.python-version == '3.12'
       with:
         name: package-build-${{ matrix.os }}-${{ matrix.python-version }}
@@ -1247,7 +1247,7 @@ jobs:
 
     - name: Comment PR with comprehensive validation results
       if: github.event_name == 'pull_request'
-      uses: actions/github-script@v7
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
