@@ -509,6 +509,26 @@ class TestExtractVideoTimestamp:
                     test_file.name
                 )
 
+    def test_ffprobe_stream_tag_fallback(self, mock_logger, tmp_path):
+        # creation_time absent from format tags but present in a stream tag
+        # (common in QuickTime .MOV files from iPhone)
+        test_file = tmp_path / "test.mov"
+        test_file.write_bytes(b"test")
+
+        with patch("bulk_rename.main.WINDOWS_AVAILABLE", False):
+            ffprobe_output = json.dumps({
+                "format": {"tags": {}},
+                "streams": [
+                    {"tags": {"creation_time": "2023-10-15T12:00:00Z"}},
+                ]
+            })
+            with patch("bulk_rename.main.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(stdout=ffprobe_output, returncode=0)
+
+                result, source = extract_video_timestamp(test_file, mock_logger)
+                assert result == datetime(2023, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+                assert source == "ffprobe"
+
 
 # =============================================================================
 # Tests for get_media_created_date_time

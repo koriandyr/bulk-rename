@@ -269,11 +269,12 @@ def extract_video_timestamp(video_path: Path,
     else:
         logger.debug("%s skipping propsys (not available on this platform)", video_path.name)
 
-    # Fallback to ffprobe
+    # Fallback to ffprobe — query both format and stream tags since some
+    # containers (e.g. QuickTime .MOV) store creation_time in stream tags only
     try:
         result = subprocess.run([
             'ffprobe', '-v', 'quiet', '-print_format', 'json',
-            '-show_entries', 'format_tags=creation_time',
+            '-show_entries', 'format_tags=creation_time:stream_tags=creation_time',
             '-i', str(video_path)
         ],
         capture_output=True,
@@ -281,7 +282,11 @@ def extract_video_timestamp(video_path: Path,
         check=False)
 
         data = json.loads(result.stdout)
-        if ts := data.get('format', {}).get('tags', {}).get('creation_time'):
+        ts = (data.get('format', {}).get('tags', {}).get('creation_time')
+              or next((s.get('tags', {}).get('creation_time')
+                       for s in data.get('streams', [])
+                       if s.get('tags', {}).get('creation_time')), None))
+        if ts:
             # Normalize ISO timestamp to UTC
             parsed_dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
             utc_dt = parsed_dt.astimezone(timezone.utc)
@@ -427,6 +432,7 @@ def convert_mov_to_mp4(src_path: Path,
     logger.info("Converting %s to %s", src_path.name, dst_path.name)
     cmd = [
         'ffmpeg', '-y', '-i', str(src_path),
+        '-map_metadata', '0',
         '-c:v', 'libx264', '-preset', 'fast', '-pix_fmt', 'yuv420p',
         '-c:a', 'aac', '-movflags', '+faststart', str(dst_path)
     ]
