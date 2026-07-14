@@ -173,7 +173,11 @@ def fallback_timestamp(path: Path,
 def extract_exif_timestamp(image_path: Path,
                            logger: logging.Logger) -> Tuple[Optional[datetime], str]:
     """Extracts the original capture timestamp from an image's EXIF metadata,
-    normalized to UTC. Falls back to filename-based timestamp if EXIF is unreadable.
+    normalized to UTC. Only uses DateTimeOriginal (tag 36867); EXIF DateTime
+    (tag 306) is intentionally ignored because it stores local time written by
+    editing software rather than the camera's capture time, and stamping it with
+    UTC would produce an incorrect Z-suffixed filename. Falls back to file mtime
+    converted to UTC when DateTimeOriginal is absent.
 
     Args:
         image_path (Path): Path to the image file (e.g., JPEG, HEIC).
@@ -184,7 +188,6 @@ def extract_exif_timestamp(image_path: Path,
         otherwise fallback timestamp in UTC.
     """
     datetime_original_tag = 36867  # DateTimeOriginal
-    datetime_tag = 306             # DateTime
 
     try:
         with Image.open(image_path) as img_file:
@@ -194,9 +197,6 @@ def extract_exif_timestamp(image_path: Path,
             if datetime_original_tag in exif:
                 raw_ts = exif[datetime_original_tag]
                 source = "EXIF DateTimeOriginal"
-            elif datetime_tag in exif:
-                raw_ts = exif[datetime_tag]
-                source = "EXIF DateTime"
             else:
                 raw_ts = None
                 source = "no EXIF timestamp"
@@ -459,11 +459,11 @@ PATTERNS_TO_RENAME = [
     re.compile(r'^P([A-Z]|\d)\d{6}', re.I),
     re.compile(r'^DSC_\d+', re.I),
 ]
-DEST_PATTERN = re.compile(r'^(\d{8})-(\d{6})(-\d+)?', re.I)
+DEST_PATTERN = re.compile(r'^(\d{8})-(\d{6})Z(-\d+)?', re.I)
 
 
 def parse_filename_date(filename: str) -> Optional[datetime]:
-    """Extract date from filename matching YYYYMMDD-HHMMSS pattern."""
+    """Extract date from filename matching YYYYMMDD-HHMMSSZ pattern."""
     match = DEST_PATTERN.search(filename)
     if match:
         try:
@@ -521,8 +521,15 @@ def convert_files(metadata_list: list[FileMetadata],
 
 
 def should_skip_file(entry: FileMetadata,
-                     logger: logging.Logger) -> tuple[bool, str, Optional[str]]:
+                     logger: logging.Logger,
+                     force: bool = False) -> tuple[bool, str, Optional[str]]:
     """Check if file should be skipped for renaming.
+
+    Args:
+        entry: File metadata entry.
+        logger: Logger instance.
+        force: If True, bypass the already-renamed check so files already in the
+            correct format are re-renamed using the current timestamp logic.
 
     Returns:
         Tuple of (should_skip, extra_text, skip_reason).
@@ -540,16 +547,20 @@ def should_skip_file(entry: FileMetadata,
     if match:
         filename_dt = parse_filename_date(filename)
 
-        if not entry.metadata_reliable:
-            logger.debug("Skipping %s: metadata unavailable, trusting filename", filename)
-            return True, '', 'already_renamed'
+        if not force:
+            if not entry.metadata_reliable:
+                logger.debug("Skipping %s: metadata unavailable, trusting filename", filename)
+                return True, '', 'already_renamed'
 
-        if filename_dt and filename_dt.date() <= entry.timestamp.date():
-            logger.debug(("Skipping %s: filename date is earlier than or matches "
-                          "metadata timestamp"), filename)
-            return True, '', 'already_renamed'
+            if filename_dt and filename_dt.date() <= entry.timestamp.date():
+                logger.debug(("Skipping %s: filename date is earlier than or matches "
+                              "metadata timestamp"), filename)
+                return True, '', 'already_renamed'
 
-        logger.info("Renaming %s: filename date mismatch with actual timestamp", filename)
+        if force:
+            logger.info("Force re-renaming already-renamed file: %s", filename)
+        else:
+            logger.info("Renaming %s: filename date mismatch with actual timestamp", filename)
         return False, filename[match.end():], None
 
     return False, matched_pattern.sub('', filename), None
@@ -558,8 +569,16 @@ def should_skip_file(entry: FileMetadata,
 def rename_files(metadata_list: list[FileMetadata],
                  folder_path: Path,
                  commit: bool,
-                 logger: logging.Logger) -> int:
+                 logger: logging.Logger,
+                 force: bool = False) -> int:
     """Rename files matching predefined patterns using their metadata timestamp.
+
+    Args:
+        metadata_list: List of file metadata entries to process.
+        folder_path: Path to the folder containing the files.
+        commit: If True, apply renames to disk. If False, simulate.
+        logger: Logger instance.
+        force: If True, re-rename files already in the correct format.
 
     Returns:
         Number of files renamed.
@@ -573,19 +592,19 @@ def rename_files(metadata_list: list[FileMetadata],
         if entry.was_converted:
             logger.debug("Converted file %s evaluated for renaming", entry.original_path.name)
 
-        should_skip, extra_text, skip_reason = should_skip_file(entry, logger)
+        should_skip, extra_text, skip_reason = should_skip_file(entry, logger, force)
         if should_skip:
             entry.skip_reason = skip_reason
             continue
 
         prefix = entry.timestamp.strftime("%Y%m%d")
         time_str = entry.timestamp.strftime("%H%M%S")
-        dst_name = f"{prefix}-{time_str}{extra_text}"
+        dst_name = f"{prefix}-{time_str}Z{extra_text}"
 
         if dst_name in existing_names:
             collision = 2
             while True:
-                dst_name = f"{prefix}-{time_str}-{collision}{extra_text}"
+                dst_name = f"{prefix}-{time_str}Z-{collision}{extra_text}"
                 if dst_name not in existing_names:
                     break
                 collision += 1
@@ -641,7 +660,8 @@ def log_summary(metadata_list: list[FileMetadata],
 def process_folder(folder: str,
                    commit: bool,
                    logger: logging.Logger,
-                   no_convert: bool = False) -> int:
+                   no_convert: bool = False,
+                   force: bool = False) -> int:
     """
     Processes a folder of media files by converting and renaming them based on metadata.
 
@@ -650,16 +670,16 @@ def process_folder(folder: str,
     2. Converts `.heic` files to `.jpg` and `.mov` files to `.mp4` (unless --no-convert).
     3. Renames files that match known patterns using their metadata timestamp.
 
-    Files are renamed to the format: `YYYYMMDD-<sequence><extra_text>`, where:
-    - `YYYYMMDD` is derived from the file's timestamp.
-    - `<sequence>` is an incrementing counter for files with the same date.
-    - `<extra_text>` preserves any suffix from the original filename.
+    Files are renamed to the format: `YYYYMMDD-HHMMSSZ<extra_text>`, where:
+    - `YYYYMMDD-HHMMSSZ` is derived from the file's UTC timestamp.
+    - `<extra_text>` preserves any label suffix from the original filename.
 
     Args:
         folder (str): Absolute or relative path to the folder containing media files.
         commit (bool): If True, apply changes to disk. If False, simulate actions.
         logger (logging.Logger): Logger instance for recording progress.
         no_convert (bool): If True, skip Apple file conversion.
+        force (bool): If True, re-rename files already in the correct format.
 
     Returns:
         int: Exit code. Returns 0 on success.
@@ -674,7 +694,7 @@ def process_folder(folder: str,
 
     metadata_list = collect_file_metadata(file_list=file_list, logger=logger)
     heic_count, mov_count = convert_files(metadata_list, commit, logger, no_convert)
-    rename_count = rename_files(metadata_list, folder_path, commit, logger)
+    rename_count = rename_files(metadata_list, folder_path, commit, logger, force)
 
     stats = ProcessingStats(
         heic_count=heic_count,
@@ -719,11 +739,18 @@ def main():
         default=False,
         help='Skip Apple file conversion (HEIC to JPG and MOV to MP4)'
     )
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        default=False,
+        help='Force re-rename files already in the correct format to apply corrected timestamps'
+    )
     args = parser.parse_args()
 
     folder = args.folder.strip()
     commit = args.commit
     no_convert = args.no_convert
+    force = args.force
 
     if not os.path.isdir(folder):
         print(f"Invalid folder: {folder}")
@@ -734,7 +761,7 @@ def main():
     logger.info("*** Starting script: %s ***", script_name)
     logger.info("Version: %s", importlib.metadata.version('bulk-rename'))
 
-    sys.exit(process_folder(folder, commit, logger, no_convert))
+    sys.exit(process_folder(folder, commit, logger, no_convert, force))
 
 if __name__ == '__main__':  # pragma: no cover
     main()
