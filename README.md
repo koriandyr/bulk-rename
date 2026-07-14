@@ -20,11 +20,11 @@
   - Deletes original files after successful conversion (sent to Recycle Bin for recovery)
 
 - **File Renaming**:
-  - Renames files using their creation date in `YYYYMMDD-SEQUENCE` format
-  - Adds a sequence number for files with the same date
-  - Preserves extra text from original filenames (e.g., `IMG_1234-edited.jpg` → `20231015-0-edited.jpg`)
-  - Only renames files matching specific patterns (e.g., `IMG_`, `VID_`, numeric prefixes)
-  - Smart skipping: already-renamed files (matching `YYYYMMDD-N` pattern) are skipped unless metadata date differs
+  - Renames files using their creation date and time in `YYYYMMDD-HHMMSSZ` format (UTC)
+  - Appends a numeric suffix on collisions (e.g., `20231015-143022Z-2`)
+  - Preserves extra text from original filenames (e.g., `IMG_1234-edited.jpg` → `20231015-143022Z-edited.jpg`)
+  - Only renames files matching specific patterns (e.g., `IMG_`, `VID_`, `DSC_`, camera prefixes, numeric prefixes)
+  - Smart skipping: already-renamed files (matching `YYYYMMDD-HHMMSSZ` pattern) are skipped unless metadata indicates the filename is stale, or `--force` is used to reprocess them unconditionally
 
 - **Metadata Extraction**:
   - Parallel processing using ThreadPoolExecutor for efficient I/O-bound metadata extraction
@@ -38,12 +38,12 @@
   - Dry-run mode by default (`--commit` flag required to apply changes)
   - Logs all actions to console and rotating log file (10-day retention)
   - Uses Recycle Bin for file deletions (fully recoverable)
-  - Skips renaming if filename date matches or is earlier than metadata date
+  - Skips renaming if filename date matches or is earlier than metadata date (override with `--force`)
   - Comprehensive error handling with detailed logging
 
 - **Supported Formats**:
   - Images: `.jpg`, `.jpeg`, `.png`, `.heic`
-  - Videos: `.mp4`, `.m4v`, `.mov`
+  - Videos: `.mp4`, `.m4v`, `.mov`, `.avi`
 
 - **Performance**:
   - Multi-threaded metadata extraction (configurable worker threads)
@@ -159,6 +159,9 @@ bulk-rename --folder /path/to/media/folder --commit
 
 - `--folder PATH`: Path to the folder containing media files (default: current directory)
 - `--commit` or `-c`: Apply changes to disk (default: dry-run mode)
+- `--no-convert`: Skip Apple file conversion (HEIC to JPG and MOV to MP4)
+- `--force`: Re-rename files already in the `YYYYMMDD-HHMMSSZ` format, applying corrected timestamps
+- `--verbose` or `-v`: Enable verbose (DEBUG) logging
 
 ### Examples
 
@@ -181,36 +184,39 @@ bulk-rename --folder "C:\Users\Username\Pictures\Vacation" --commit
 ## How It Works
 
 1. **Metadata Collection**: Scans all supported files and extracts creation timestamps
-2. **File Conversion**: Converts HEIC images to JPEG and MOV videos to MP4
-3. **File Renaming**: Renames files matching predefined patterns using the format `YYYYMMDD-SEQUENCE[EXTRA_TEXT]`
+2. **File Conversion**: Converts HEIC images to JPEG and MOV videos to MP4 (unless `--no-convert`)
+3. **File Renaming**: Renames files matching predefined patterns using the format `YYYYMMDD-HHMMSSZ[-N][EXTRA_TEXT]`, where the timestamp is the file's creation time normalized to UTC and `-N` is an incrementing sequence number appended only when multiple files collide on the same second
 
 ### Renaming Patterns
 
 Files are renamed only if they match these patterns:
 - `IM_`, `IMG_`, `IMG_E`, `VD_` followed by digits
+- `DSC_` followed by digits
+- Three letters followed by digits (e.g., `DSC00002`, `MAH00003` — common camera filename prefixes)
+- `genMid.` (Facebook/Messenger media filenames)
 - Pure numeric filenames
 - Four letters followed by four digits (e.g., `ABCD1234`)
 - `BulkPics` followed by digits
 - `P` followed by letter/digit and six digits
-- Existing `YYYYMMDD-` format (for reprocessing)
+- Existing `YYYYMMDD-HHMMSSZ` format (for reprocessing)
 
 ### Example Output
 
 **Original files:**
-- `IMG_1234.jpg` (taken 2023-10-15)
-- `IMG_5678.jpg` (taken 2023-10-15)
-- `IMG_1234-edited.jpg` (taken 2023-10-15, with extra text)
-- `VID_0001.mov` (taken 2023-10-16)
-- `photo.heic` (taken 2023-10-17)
-- `20231018-0.jpg` (already renamed, taken 2023-10-18)
+- `IMG_1234.jpg` (taken 2023-10-15 14:30:22 UTC)
+- `IMG_5678.jpg` (taken 2023-10-15 09:12:05 UTC)
+- `IMG_1234-edited.jpg` (taken 2023-10-15 14:30:22 UTC, with extra text)
+- `VID_0001.mov` (taken 2023-10-16 08:00:00 UTC)
+- `photo.heic` (taken 2023-10-17 11:45:30 UTC)
+- `20231018-120000Z.jpg` (already renamed, taken 2023-10-18)
 
 **After processing:**
-- `20231015-0.jpg` (from IMG_1234.jpg)
-- `20231015-1.jpg` (from IMG_5678.jpg)
-- `20231015-2-edited.jpg` (from IMG_1234-edited.jpg, extra text preserved)
-- `20231016-0.mp4` (converted from VID_0001.mov)
-- `20231017-0.jpg` (converted from photo.heic)
-- `20231018-0.jpg` (skipped, already in correct format)
+- `20231015-143022Z.jpg` (from IMG_1234.jpg)
+- `20231015-091205Z.jpg` (from IMG_5678.jpg)
+- `20231015-143022Z-edited.jpg` (from IMG_1234-edited.jpg, extra text preserved; `-2` collision suffix inserted before the extra text if the timestamp also collides)
+- `20231016-080000Z.mp4` (converted from VID_0001.mov)
+- `20231017-114530Z.jpg` (converted from photo.heic)
+- `20231018-120000Z.jpg` (skipped, already in correct format; use `--force` to re-rename anyway)
 
 ## Logging
 
