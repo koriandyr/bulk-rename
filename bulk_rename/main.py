@@ -464,6 +464,7 @@ PATTERNS_TO_RENAME = [
     re.compile(r'^BulkPics\s\d+', re.I),
     re.compile(r'^P([A-Z]|\d)\d{6}', re.I),
     re.compile(r'^DSC_\d+', re.I),
+    re.compile(r'^[A-Z]{3}\d+', re.I),
 ]
 DEST_PATTERN = re.compile(r'^(\d{8})-(\d{6})Z(-\d+)?', re.I)
 

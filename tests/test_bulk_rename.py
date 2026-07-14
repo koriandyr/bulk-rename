@@ -1541,6 +1541,8 @@ class TestEdgeCases:
             ("DSC_0001.JPG", True),
             ("20231015-120000Z.jpg", True),
             ("MOVI0000.avi", True),
+            ("DSC00002.jpg", True),
+            ("MAH00003.mp4", True),
             ("random.jpg", False),
         ]
         for filename, should_match in patterns:
