@@ -173,7 +173,11 @@ def process_file(file_path: Path, metadata: FileMetadata) -> bool:
 **All code must achieve:**
 
 - **Pylint score**: 10.00/10.00 (no exceptions without justification)
-- **Test coverage**: 100% code coverage
+- **Test coverage**: 90% minimum. Prioritise tests that validate business logic,
+  error handling, and correctness-critical branches. Do not add tests solely to
+  satisfy the metric — if the only way to cover a path is through a brittle mock
+  or a test with no diagnostic value, leave it uncovered and annotate with
+  `# pragma: no cover`.
 - **All tests passing**: No failing tests in CI
 
 **Allowed pylint disables (test files only):**
@@ -258,7 +262,7 @@ on Windows, macOS, and Linux.
    # Tests with coverage
    pytest tests/test_bulk_rename.py -v --cov=bulk_rename --cov-report=term-missing
 
-   # Ensure 100% coverage and 10.00 pylint score
+   # Ensure 90% coverage and 10.00 pylint score
    ```
 
 3. **Update documentation** if needed:
@@ -306,7 +310,7 @@ Related to #456
 - [ ] I have added tests that prove my fix is effective or that my feature works
 - [ ] New and existing unit tests pass locally with my changes
 - [ ] My code achieves 10.00/10.00 pylint score
-- [ ] My code achieves 100% test coverage
+- [ ] My code achieves 90% test coverage
 
 ## Testing
 Describe the tests you ran and how to reproduce them:
@@ -342,7 +346,9 @@ Add screenshots to help explain your changes
 - **Location**: Place tests in `tests/test_bulk_rename.py`
 - **Naming**: Use descriptive test names: `test_<function>_<scenario>`
 - **Structure**: Use pytest fixtures for common setup
-- **Coverage**: Aim for 100% line coverage
+- **Coverage**: Aim for 90% line coverage. Focus on business logic and error
+  paths; use `# pragma: no cover` for trivial or unreachable branches rather
+  than writing low-value tests to cover them.
 - **Mocking**: Mock external dependencies (file system, subprocess calls)
 
 **Example Test:**

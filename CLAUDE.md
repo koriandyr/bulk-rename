@@ -50,7 +50,7 @@ pip install -e .
 **Context Awareness**: Claude automatically understands:
 - Windows-specific requirements and pywin32 usage
 - External tool dependencies (ImageMagick, FFmpeg)
-- The 10.00 pylint and 100% coverage requirements
+- The 10.00 pylint and 90% coverage requirements
 - Dataclass patterns and parallel processing approaches
 
 ## Development Workflow
@@ -72,6 +72,13 @@ Allowed pylint disables for test modules:
 ```
 
 **Code Coverage**
-- Target: 100% code coverage
-- Use `# pragma: no cover` only for entry point blocks (`if __name__ == '__main__'`)
-- Run coverage report to identify untested code paths
+- Target: 90% coverage. Focus tests on business logic, data transformation,
+  error handling, and decision branches that affect correctness or safety.
+- Do not write tests purely to satisfy a coverage metric. If achieving coverage
+  on a code path requires a brittle mock or produces a test with no diagnostic
+  value, skip it and use `# pragma: no cover` instead.
+- Use `# pragma: no cover` for: entry-point blocks, trivial log-only branches,
+  and defensive code that cannot be reached under normal or expected failure
+  conditions.
+- Run the coverage report to find gaps, then exercise judgement on whether
+  each gap represents a genuine test omission or acceptable uncovered code.

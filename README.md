@@ -251,7 +251,7 @@ This includes:
 
 ### Running Tests
 
-The project includes a comprehensive unit test suite with 100% code coverage.
+The project includes a comprehensive unit test suite with 90%+ code coverage.
 
 Run all tests:
 
@@ -309,7 +309,7 @@ Or using the virtual environment:
 - **Pylint Score**: All code must achieve 10.00/10
 - **Docstrings**: Use Google-style docstrings for all public functions
 - **Type Hints**: Include type hints for function parameters and return values
-- **Code Coverage**: Maintain 100% test coverage
+- **Code Coverage**: Maintain 90% test coverage
 
 ## Contributing
 

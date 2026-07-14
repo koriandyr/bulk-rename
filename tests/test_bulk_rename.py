@@ -125,6 +125,7 @@ class TestConstants:
         assert '.mp4' in VIDEO_FORMATS
         assert '.mov' in VIDEO_FORMATS
         assert '.m4v' in VIDEO_FORMATS
+        assert '.avi' in VIDEO_FORMATS
 
     def test_allowed_suffixes_is_union(self):
         assert ALLOWED_SUFFIXES == IMG_FORMATS | VIDEO_FORMATS
@@ -140,7 +141,7 @@ class TestConstants:
 
     def test_dest_pattern_compiled(self):
         assert hasattr(DEST_PATTERN, 'search')
-        match = DEST_PATTERN.search("20231015-0.jpg")
+        match = DEST_PATTERN.search("20231015-120000Z.jpg")
         assert match is not None
         assert match.group(1) == "20231015"
 
@@ -335,7 +336,11 @@ class TestExtractExifTimestamp:
             assert result == datetime(2023, 10, 15, 12, 30, 45, tzinfo=timezone.utc)
             assert source == "EXIF DateTimeOriginal"
 
-    def test_extracts_datetime_tag(self, mock_logger):
+    def test_datetime_tag_ignored_falls_back_to_mtime(self, mock_logger, tmp_path):
+        # Tag 306 (DateTime) stores local time written by software — not used.
+        # When only tag 306 is present, must fall through to file mtime.
+        test_file = tmp_path / "test.jpg"
+        test_file.write_bytes(b"test")
         mock_exif = {306: "2023:10:15 12:30:45"}
         with patch("bulk_rename.main.Image.open") as mock_open:
             mock_img = MagicMock()
@@ -344,9 +349,9 @@ class TestExtractExifTimestamp:
             mock_img.__exit__ = Mock(return_value=False)
             mock_open.return_value = mock_img
 
-            result, source = extract_exif_timestamp(Path("/test.jpg"), mock_logger)
-            assert result == datetime(2023, 10, 15, 12, 30, 45, tzinfo=timezone.utc)
-            assert source == "EXIF DateTime"
+            result, source = extract_exif_timestamp(test_file, mock_logger)
+            assert isinstance(result, datetime)
+            assert source == "fallback"
 
     def test_no_exif_uses_fallback(self, mock_logger, tmp_path):
         test_file = tmp_path / "test.jpg"
@@ -504,6 +509,26 @@ class TestExtractVideoTimestamp:
                     "%s skipping propsys (not available on this platform)",
                     test_file.name
                 )
+
+    def test_ffprobe_stream_tag_fallback(self, mock_logger, tmp_path):
+        # creation_time absent from format tags but present in a stream tag
+        # (common in QuickTime .MOV files from iPhone)
+        test_file = tmp_path / "test.mov"
+        test_file.write_bytes(b"test")
+
+        with patch("bulk_rename.main.WINDOWS_AVAILABLE", False):
+            ffprobe_output = json.dumps({
+                "format": {"tags": {}},
+                "streams": [
+                    {"tags": {"creation_time": "2023-10-15T12:00:00Z"}},
+                ]
+            })
+            with patch("bulk_rename.main.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(stdout=ffprobe_output, returncode=0)
+
+                result, source = extract_video_timestamp(test_file, mock_logger)
+                assert result == datetime(2023, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+                assert source == "ffprobe"
 
 
 # =============================================================================
@@ -868,11 +893,11 @@ class TestParseFilenameDate:
     """Test parse_filename_date function."""
 
     def test_parses_valid_date(self):
-        result = parse_filename_date("20231015-0.jpg")
+        result = parse_filename_date("20231015-120000Z.jpg")
         assert result == datetime(2023, 10, 15, tzinfo=timezone.utc)
 
-    def test_parses_date_with_sequence(self):
-        result = parse_filename_date("20231015-123.jpg")
+    def test_parses_date_with_collision_suffix(self):
+        result = parse_filename_date("20231015-120000Z-2.jpg")
         assert result == datetime(2023, 10, 15, tzinfo=timezone.utc)
 
     def test_returns_none_for_no_match(self):
@@ -880,7 +905,11 @@ class TestParseFilenameDate:
         assert result is None
 
     def test_returns_none_for_invalid_date(self):
-        result = parse_filename_date("99991399-0.jpg")
+        result = parse_filename_date("99991399-120000Z.jpg")
+        assert result is None
+
+    def test_returns_none_for_old_format(self):
+        result = parse_filename_date("20231015-0.jpg")
         assert result is None
 
 
@@ -920,10 +949,10 @@ class TestShouldSkipFile:
 
     def test_skip_already_renamed_unreliable_metadata(self, mock_logger):
         entry = FileMetadata(
-            original_path=Path("/test/20231015-0.jpg"),
+            original_path=Path("/test/20231015-120000Z.jpg"),
             timestamp=datetime.now(timezone.utc),
             extension=".jpg",
-            original_name="20231015-0.jpg",
+            original_name="20231015-120000Z.jpg",
             metadata_reliable=False,
             timestamp_source="fallback",
         )
@@ -933,10 +962,10 @@ class TestShouldSkipFile:
 
     def test_skip_already_renamed_matching_date(self, mock_logger):
         entry = FileMetadata(
-            original_path=Path("/test/20231015-0.jpg"),
+            original_path=Path("/test/20231015-120000Z.jpg"),
             timestamp=datetime(2023, 10, 15, 12, 0, 0, tzinfo=timezone.utc),
             extension=".jpg",
-            original_name="20231015-0.jpg",
+            original_name="20231015-120000Z.jpg",
             metadata_reliable=True,
             timestamp_source="EXIF",
         )
@@ -946,16 +975,42 @@ class TestShouldSkipFile:
 
     def test_no_skip_date_mismatch(self, mock_logger):
         entry = FileMetadata(
-            original_path=Path("/test/20231020-0.jpg"),
+            original_path=Path("/test/20231020-120000Z.jpg"),
             timestamp=datetime(2023, 10, 15, 12, 0, 0, tzinfo=timezone.utc),
             extension=".jpg",
-            original_name="20231020-0.jpg",
+            original_name="20231020-120000Z.jpg",
             metadata_reliable=True,
             timestamp_source="EXIF",
         )
         should_skip, _extra_text, reason = should_skip_file(entry, mock_logger)
         assert should_skip is False
         assert reason is None
+
+    def test_old_format_triggers_rename(self, mock_logger):
+        entry = FileMetadata(
+            original_path=Path("/test/20231015-0.jpg"),
+            timestamp=datetime(2023, 10, 15, 12, 0, 0, tzinfo=timezone.utc),
+            extension=".jpg",
+            original_name="20231015-0.jpg",
+            metadata_reliable=True,
+            timestamp_source="EXIF",
+        )
+        should_skip, _extra_text, reason = should_skip_file(entry, mock_logger)
+        assert should_skip is False
+        assert reason is None
+
+    def test_old_format_extra_text_extracted(self, mock_logger):
+        entry = FileMetadata(
+            original_path=Path("/test/20231015-0-vacation.JPG"),
+            timestamp=datetime(2023, 10, 15, 12, 0, 0, tzinfo=timezone.utc),
+            extension=".jpg",
+            original_name="20231015-0-vacation.JPG",
+            metadata_reliable=True,
+            timestamp_source="EXIF",
+        )
+        should_skip, extra_text, _reason = should_skip_file(entry, mock_logger)
+        assert should_skip is False
+        assert extra_text == "-vacation.JPG"
 
     def test_extracts_extra_text_from_pattern(self, mock_logger):
         entry = FileMetadata(
@@ -969,6 +1024,34 @@ class TestShouldSkipFile:
         should_skip, extra_text, _reason = should_skip_file(entry, mock_logger)
         assert should_skip is False
         assert "_extra.jpg" in extra_text
+
+    def test_force_renames_already_renamed_reliable(self, mock_logger):
+        entry = FileMetadata(
+            original_path=Path("/test/20231015-120000Z.jpg"),
+            timestamp=datetime(2023, 10, 15, 12, 0, 0, tzinfo=timezone.utc),
+            extension=".jpg",
+            original_name="20231015-120000Z.jpg",
+            metadata_reliable=True,
+            timestamp_source="EXIF",
+        )
+        should_skip, extra_text, reason = should_skip_file(entry, mock_logger, force=True)
+        assert should_skip is False
+        assert extra_text == ".jpg"
+        assert reason is None
+
+    def test_force_renames_already_renamed_unreliable(self, mock_logger):
+        # Normally unreliable metadata causes skip; force=True overrides that.
+        entry = FileMetadata(
+            original_path=Path("/test/20231015-120000Z.jpg"),
+            timestamp=datetime(2023, 10, 15, 12, 0, 0, tzinfo=timezone.utc),
+            extension=".jpg",
+            original_name="20231015-120000Z.jpg",
+            metadata_reliable=False,
+            timestamp_source="fallback",
+        )
+        should_skip, _extra_text, reason = should_skip_file(entry, mock_logger, force=True)
+        assert should_skip is False
+        assert reason is None
 
 
 # =============================================================================
@@ -1005,12 +1088,12 @@ class TestRenameFiles:
 
         count = rename_files(metadata, tmp_path, commit=True, logger=mock_logger)
         assert count == 2
-        assert (tmp_path / "20231015-0.jpg").exists()
-        assert (tmp_path / "20231015-1.jpg").exists()
+        assert (tmp_path / "20231015-120000Z.jpg").exists()
+        assert (tmp_path / "20231015-140000Z.jpg").exists()
 
     def test_handles_collision(self, mock_logger, tmp_path):
         file1 = tmp_path / "IMG_0001.jpg"
-        existing = tmp_path / "20231015-0.jpg"
+        existing = tmp_path / "20231015-120000Z.jpg"
         file1.write_bytes(b"test1")
         existing.write_bytes(b"existing")
 
@@ -1027,7 +1110,7 @@ class TestRenameFiles:
 
         count = rename_files(metadata, tmp_path, commit=True, logger=mock_logger)
         assert count == 1
-        assert (tmp_path / "20231015-1.jpg").exists()
+        assert (tmp_path / "20231015-120000Z-2.jpg").exists()
 
     def test_sets_skip_reason(self, mock_logger, tmp_path):
         file1 = tmp_path / "random.jpg"
@@ -1065,6 +1148,67 @@ class TestRenameFiles:
         count = rename_files(metadata, tmp_path, commit=False, logger=mock_logger)
         assert count == 1
         assert file1.exists()  # Not actually renamed
+
+    def test_handles_multi_collision(self, mock_logger, tmp_path):
+        file1 = tmp_path / "IMG_0001.jpg"
+        existing1 = tmp_path / "20231015-120000Z.jpg"
+        existing2 = tmp_path / "20231015-120000Z-2.jpg"
+        file1.write_bytes(b"test1")
+        existing1.write_bytes(b"existing1")
+        existing2.write_bytes(b"existing2")
+
+        metadata = [
+            FileMetadata(
+                original_path=file1,
+                timestamp=datetime(2023, 10, 15, 12, 0, 0, tzinfo=timezone.utc),
+                extension=".jpg",
+                original_name="IMG_0001.jpg",
+                metadata_reliable=True,
+                timestamp_source="EXIF",
+            ),
+        ]
+
+        count = rename_files(metadata, tmp_path, commit=True, logger=mock_logger)
+        assert count == 1
+        assert (tmp_path / "20231015-120000Z-3.jpg").exists()
+
+    def test_renames_old_format_to_new_format(self, mock_logger, tmp_path):
+        file1 = tmp_path / "20231015-5.jpg"
+        file1.write_bytes(b"test")
+
+        metadata = [
+            FileMetadata(
+                original_path=file1,
+                timestamp=datetime(2023, 10, 15, 12, 0, 0, tzinfo=timezone.utc),
+                extension=".jpg",
+                original_name="20231015-5.jpg",
+                metadata_reliable=True,
+                timestamp_source="EXIF",
+            ),
+        ]
+
+        count = rename_files(metadata, tmp_path, commit=True, logger=mock_logger)
+        assert count == 1
+        assert (tmp_path / "20231015-120000Z.jpg").exists()
+
+    def test_old_format_extra_text_preserved(self, mock_logger, tmp_path):
+        file1 = tmp_path / "20231015-5-vacation.JPG"
+        file1.write_bytes(b"test")
+
+        metadata = [
+            FileMetadata(
+                original_path=file1,
+                timestamp=datetime(2023, 10, 15, 12, 0, 0, tzinfo=timezone.utc),
+                extension=".jpg",
+                original_name="20231015-5-vacation.JPG",
+                metadata_reliable=True,
+                timestamp_source="EXIF",
+            ),
+        ]
+
+        count = rename_files(metadata, tmp_path, commit=True, logger=mock_logger)
+        assert count == 1
+        assert (tmp_path / "20231015-120000Z-vacation.JPG").exists()
 
 
 # =============================================================================
@@ -1252,6 +1396,15 @@ class TestMain:
                 mock_process.assert_called_once()
                 assert mock_process.call_args[0][3] is True  # no_convert=True
 
+    def test_force_flag(self, tmp_path):
+        with patch("sys.argv", ["bulk-rename", "--folder", str(tmp_path), "--force"]):
+            with patch("bulk_rename.main.process_folder") as mock_process:
+                mock_process.return_value = 0
+                with pytest.raises(SystemExit):
+                    main()
+                mock_process.assert_called_once()
+                assert mock_process.call_args[0][4] is True  # force=True
+
 
 # =============================================================================
 # Edge Cases and Integration Tests
@@ -1384,6 +1537,13 @@ class TestEdgeCases:
             ("PA123456.jpg", True),
             ("P1234567.jpg", True),
             ("20231015-0.jpg", True),
+            ("DSC_0468.jpg", True),
+            ("DSC_0001.JPG", True),
+            ("20231015-120000Z.jpg", True),
+            ("MOVI0000.avi", True),
+            ("DSC00002.jpg", True),
+            ("MAH00003.mp4", True),
+            ("genMid.71800455_1.jpg", True),
             ("random.jpg", False),
         ]
         for filename, should_match in patterns:
