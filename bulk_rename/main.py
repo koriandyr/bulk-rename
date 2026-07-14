@@ -62,7 +62,7 @@ except ImportError:  # pragma: no cover
 
 # File format constants - frozensets for O(1) lookup
 IMG_FORMATS = frozenset({'.png', '.jpg', '.jpeg', '.heic'})
-VIDEO_FORMATS = frozenset({'.m4v', '.mov', '.mp4'})
+VIDEO_FORMATS = frozenset({'.avi', '.m4v', '.mov', '.mp4'})
 ALLOWED_SUFFIXES = IMG_FORMATS | VIDEO_FORMATS
 
 # Default number of worker threads for parallel metadata extraction

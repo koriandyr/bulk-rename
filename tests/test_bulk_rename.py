@@ -125,6 +125,7 @@ class TestConstants:
         assert '.mp4' in VIDEO_FORMATS
         assert '.mov' in VIDEO_FORMATS
         assert '.m4v' in VIDEO_FORMATS
+        assert '.avi' in VIDEO_FORMATS
 
     def test_allowed_suffixes_is_union(self):
         assert ALLOWED_SUFFIXES == IMG_FORMATS | VIDEO_FORMATS
@@ -1539,6 +1540,7 @@ class TestEdgeCases:
             ("DSC_0468.jpg", True),
             ("DSC_0001.JPG", True),
             ("20231015-120000Z.jpg", True),
+            ("MOVI0000.avi", True),
             ("random.jpg", False),
         ]
         for filename, should_match in patterns:
