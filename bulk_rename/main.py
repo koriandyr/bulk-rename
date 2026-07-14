@@ -27,6 +27,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
+import importlib.metadata
 import logging
 import json
 import mimetypes
@@ -451,17 +452,18 @@ def convert_mov_to_mp4(src_path: Path,
 # Precompiled patterns for filename matching
 PATTERNS_TO_RENAME = [
     re.compile(r'^(IM_|IMG_|IMG_E|VD_)\d+', re.I),
+    re.compile(r'^(\d{8})-\d+', re.I),
     re.compile(r'^\d+(_\d+)?', re.I),
     re.compile(r'^[A-Z]{4}\d{4}', re.I),
     re.compile(r'^BulkPics\s\d+', re.I),
     re.compile(r'^P([A-Z]|\d)\d{6}', re.I),
-    re.compile(r'^(\d{8})-\d+', re.I)
+    re.compile(r'^DSC_\d+', re.I),
 ]
-DEST_PATTERN = re.compile(r'^(\d{8})-\d+', re.I)
+DEST_PATTERN = re.compile(r'^(\d{8})-(\d{6})(-\d+)?', re.I)
 
 
 def parse_filename_date(filename: str) -> Optional[datetime]:
-    """Extract date from filename matching YYYYMMDD-N pattern."""
+    """Extract date from filename matching YYYYMMDD-HHMMSS pattern."""
     match = DEST_PATTERN.search(filename)
     if match:
         try:
@@ -563,30 +565,30 @@ def rename_files(metadata_list: list[FileMetadata],
         Number of files renamed.
     """
     rename_count = 0
-    count = 0
-    last_date = ''
 
     # Cache existing filenames for O(1) collision detection
     existing_names = {f.name for f in folder_path.iterdir() if f.is_file()}
 
     for entry in sorted(metadata_list, key=lambda x: (x.timestamp, x.original_path.name)):
-        prefix = entry.timestamp.strftime("%Y%m%d")
-
         if entry.was_converted:
             logger.debug("Converted file %s evaluated for renaming", entry.original_path.name)
-
-        count = count + 1 if last_date == prefix else 0
-        last_date = prefix
 
         should_skip, extra_text, skip_reason = should_skip_file(entry, logger)
         if should_skip:
             entry.skip_reason = skip_reason
             continue
 
-        dst_name = f"{prefix}-{count}{extra_text}"
-        while dst_name in existing_names:
-            count += 1
-            dst_name = f"{prefix}-{count}{extra_text}"
+        prefix = entry.timestamp.strftime("%Y%m%d")
+        time_str = entry.timestamp.strftime("%H%M%S")
+        dst_name = f"{prefix}-{time_str}{extra_text}"
+
+        if dst_name in existing_names:
+            collision = 2
+            while True:
+                dst_name = f"{prefix}-{time_str}-{collision}{extra_text}"
+                if dst_name not in existing_names:
+                    break
+                collision += 1
 
         if rename_file(entry.original_path, folder_path / dst_name, commit=commit, logger=logger):
             # Update cache: remove old name, add new name
@@ -730,6 +732,7 @@ def main():
     script_name = os.path.basename(sys.argv[0])
     logger = setup_logger(script_name, verbose=args.verbose)
     logger.info("*** Starting script: %s ***", script_name)
+    logger.info("Version: %s", importlib.metadata.version('bulk-rename'))
 
     sys.exit(process_folder(folder, commit, logger, no_convert))
 

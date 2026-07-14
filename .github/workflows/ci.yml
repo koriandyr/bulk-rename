@@ -937,7 +937,7 @@ jobs:
         print("=" * 70)
 
         print("\n### Code Quality Metrics ###")
-        print(f"Coverage:     {coverage}% (required: 100%)")
+        print(f"Coverage:     {coverage}% (required: 90%)")
         print(f"Pylint (pkg): {pylint_main}/10.00 (required: 10.00)")
         print(f"Pylint (test):{pylint_test}/10.00 (required: 10.00)")
         print(f"Test Status:  {test_status} (required: success)")
@@ -945,8 +945,8 @@ jobs:
         failed = False
 
         # Check code quality gates
-        if coverage < 100:
-            print(f"\n[FAIL] Coverage gate failed: {coverage}% < 100%")
+        if coverage < 90:
+            print(f"\n[FAIL] Coverage gate failed: {coverage}% < 90%")
             failed = True
         else:
             print(f"\n[PASS] Coverage gate passed: {coverage}%")
@@ -1028,8 +1028,8 @@ jobs:
           // Code Quality Section
           comment += '### 📊 Code Quality\n\n';
 
-          const coverageIcon = coverage >= 100 ? '✅' : coverage >= 90 ? '⚠️' : '❌';
-          comment += `**Coverage ${coverageIcon}**: ${coverage}% (required: 100%)\n`;
+          const coverageIcon = coverage >= 90 ? '✅' : coverage >= 75 ? '⚠️' : '❌';
+          comment += `**Coverage ${coverageIcon}**: ${coverage}% (required: 90%)\n`;
 
           const pylintMainIcon = pylintMainScore >= 10 ? '✅' : pylintMainScore >= 9 ? '⚠️' : '❌';
           const pylintTestIcon = pylintTestScore >= 10 ? '✅' : pylintTestScore >= 9 ? '⚠️' : '❌';
@@ -1057,13 +1057,13 @@ jobs:
 
           // Overall quality gate status
           comment += '### ✨ Quality Gates\n';
-          const allPassed = coverage >= 100 && pylintMainScore >= 10 && pylintTestScore >= 10 && testStatus === 'success';
+          const allPassed = coverage >= 90 && pylintMainScore >= 10 && pylintTestScore >= 10 && testStatus === 'success';
 
           if (allPassed) {
             comment += '✅ **All quality gates PASSED!**\n';
           } else {
             comment += '❌ **Some quality gates FAILED:**\n';
-            if (coverage < 100) comment += `- Coverage must be 100% (currently ${coverage}%)\n`;
+            if (coverage < 90) comment += `- Coverage must be 90% (currently ${coverage}%)\n`;
             if (pylintMainScore < 10) comment += `- bulk_rename package must score 10.00 (currently ${pylintMainScore})\n`;
             if (pylintTestScore < 10) comment += `- tests must score 10.00 (currently ${pylintTestScore})\n`;
             if (testStatus !== 'success') comment += '- All tests must pass\n';

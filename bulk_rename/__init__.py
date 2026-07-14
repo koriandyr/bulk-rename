@@ -1,6 +1,6 @@
 """Bulk Rename - A tool for batch renaming media files based on creation dates."""
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 
 __all__ = ["__version__"]
 

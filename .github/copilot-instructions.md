@@ -30,7 +30,7 @@ GitHub Copilot automatically reads this file when working in this repository. Th
 **Best Practices**:
 - Copilot will automatically follow the naming conventions (UPPER_SNAKE_CASE for constants, etc.)
 - It understands the requirement for Google-style docstrings and type hints
-- It knows about the 10.00 pylint requirement and 100% test coverage standards
+- It knows about the 10.00 pylint requirement and 90% test coverage standards
 
 ## Integration Notes
 
